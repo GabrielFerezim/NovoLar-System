@@ -27,7 +27,9 @@ import {
   Upload,
   Database,
   Send,
-  Menu
+  Menu,
+  Truck,
+  FileText
 } from 'lucide-react';
 import { 
   getProducts, 
@@ -42,7 +44,8 @@ import {
   saveDB,
   getStoreId,
   setStoreId,
-  runBackgroundSync
+  runBackgroundSync,
+  updateSaleDeliveryStatus
 } from './db';
 import { supabase } from './supabase';
 
@@ -65,6 +68,8 @@ export default function App() {
     return localStorage.getItem('novo_lar_user_role') || 'admin';
   });
   const [lastSaleReceipt, setLastSaleReceipt] = useState(null);
+  const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+  const [selectedInvoiceSale, setSelectedInvoiceSale] = useState(null);
 
   // Estados de Controle Multi-Loja e Nuvem
   const [storeId, setStoreIdState] = useState(getStoreId());
@@ -352,7 +357,7 @@ export default function App() {
     setCart(prevCart => prevCart.filter(item => item.id !== productId));
   };
 
-  const handleCheckout = async () => {
+  const handleCheckout = async (deliveryDetails = null) => {
     if (cart.length === 0) return;
     
     try {
@@ -360,7 +365,7 @@ export default function App() {
       const salePayment = paymentMethod;
       const salePaid = parseFloat(amountPaid.replace(',', '.')) || 0;
 
-      const res = await registerSale(cart, paymentMethod);
+      const res = await registerSale(cart, paymentMethod, deliveryDetails);
       setProducts(res.products);
       setSales(res.sales);
 
@@ -371,7 +376,8 @@ export default function App() {
         items: saleItems,
         paymentMethod: salePayment,
         amountPaid: salePaid,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        deliveryDetails
       });
 
       setCart([]);
@@ -380,6 +386,18 @@ export default function App() {
     } catch (error) {
       console.error("Erro ao finalizar venda:", error);
       showScanNotification("Erro ao finalizar venda.", "error");
+    }
+  };
+
+  // --- CONTROLE DE ENTREGAS ---
+  const handleUpdateDeliveryStatus = async (saleId, status, deliveredAt = null) => {
+    try {
+      const updatedSales = await updateSaleDeliveryStatus(saleId, status, deliveredAt);
+      setSales(updatedSales);
+      showScanNotification(status === 'Entregue' ? "Entrega concluída!" : "Status da entrega atualizado.");
+    } catch (e) {
+      console.error("Erro ao atualizar entrega:", e);
+      showScanNotification("Erro ao atualizar status.", "error");
     }
   };
 
@@ -570,6 +588,15 @@ export default function App() {
                     Insights (IA)
                   </button>
                 </li>
+                <li>
+                  <button 
+                    className={`submenu-item-btn ${activeTab === 'admin-deliveries' ? 'active' : ''}`}
+                    onClick={() => { setActiveTab('admin-deliveries'); setIsMobileMenuOpen(false); }}
+                  >
+                    <Truck size={16} />
+                    Controle de Entregas
+                  </button>
+                </li>
               </ul>
             )}
           </li>
@@ -668,6 +695,7 @@ export default function App() {
               {activeTab === 'admin-insights' && 'Insights Comerciais (IA)'}
               {activeTab === 'admin-products' && 'Administração: Produtos & Estoque'}
               {activeTab === 'admin-finance' && 'Administração: Controle Geral & Rede'}
+              {activeTab === 'admin-deliveries' && 'Administração: Controle de Entregas'}
             </h1>
             <span className="header-subtitle">
               {activeTab === 'daily-data' && 'Acompanhamento do faturamento, lucros e despesas de hoje'}
@@ -676,6 +704,7 @@ export default function App() {
               {activeTab === 'admin-insights' && 'Análise de vendas, priorização de compras por lucro e diagnóstico de mercado'}
               {activeTab === 'admin-products' && 'Cadastre, edite e gerencie o estoque mínimo dos produtos'}
               {activeTab === 'admin-finance' && 'Controle financeiro consolidado de faturamento, lucros, gráficos e rede ao vivo'}
+              {activeTab === 'admin-deliveries' && 'Painel de expedição de pedidos para entrega física e geração de Notas Fiscais'}
             </span>
           </div>
 
@@ -804,6 +833,17 @@ export default function App() {
               />
             </div>
           )}
+
+          {activeTab === 'admin-deliveries' && (
+            <DeliveriesView 
+              sales={sales}
+              onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
+              onGenerateInvoice={(sale) => {
+                setSelectedInvoiceSale(sale);
+                setInvoiceModalOpen(true);
+              }}
+            />
+          )}
         </div>
       </main>
 
@@ -829,6 +869,14 @@ export default function App() {
         <ReceiptModal 
           receipt={lastSaleReceipt}
           onClose={() => setLastSaleReceipt(null)}
+        />
+      )}
+
+      {/* MODAL DE NOTA FISCAL (DANFE SIMPLIFICADA) */}
+      {invoiceModalOpen && selectedInvoiceSale && (
+        <InvoiceModal 
+          sale={selectedInvoiceSale}
+          onClose={() => { setInvoiceModalOpen(false); setSelectedInvoiceSale(null); }}
         />
       )}
     </div>
@@ -1383,6 +1431,13 @@ function PDVView({
   const searchInputRef = useRef(null);
   const amountPaidInputRef = useRef(null);
 
+  // Estados locais para agendamento de entregas
+  const [requiresDelivery, setRequiresDelivery] = useState(false);
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryDate, setDeliveryDate] = useState('');
+  const [receiverName, setReceiverName] = useState('');
+  const [deliveryNotes, setDeliveryNotes] = useState('');
+
   // Sistema de recomendação inteligente (Assistente IA local)
   const getAISuggestion = () => {
     if (cart.length === 0) return null;
@@ -1903,9 +1958,75 @@ function PDVView({
             </div>
           )}
 
+          {/* Agendamento de Entrega Form */}
+          <div style={{ 
+            marginTop: '16px', 
+            padding: '12px 14px', 
+            border: '1px solid var(--border-color)', 
+            borderRadius: 'var(--radius-md)', 
+            backgroundColor: 'var(--bg-tertiary)' 
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={() => setRequiresDelivery(!requiresDelivery)}>
+              <input 
+                type="checkbox" 
+                checked={requiresDelivery} 
+                onChange={(e) => setRequiresDelivery(e.target.checked)} 
+                style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                onClick={(e) => e.stopPropagation()}
+              />
+              <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>Agendar entrega deste pedido?</span>
+            </div>
+
+            {requiresDelivery && (
+              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px', animation: 'modalFadeIn 0.2s ease-out' }}>
+                <div>
+                  <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Recebedor / Contato na Obra</label>
+                  <input 
+                    type="text" 
+                    placeholder="Nome de quem vai receber..." 
+                    value={receiverName}
+                    onChange={(e) => setReceiverName(e.target.value)}
+                    style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
+                  />
+                </div>
+                <div>
+                  <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Endereço de Entrega</label>
+                  <input 
+                    type="text" 
+                    placeholder="Rua, número, bairro, cidade..." 
+                    value={deliveryAddress}
+                    onChange={(e) => setDeliveryAddress(e.target.value)}
+                    style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
+                  />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div>
+                    <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Data Programada</label>
+                    <input 
+                      type="date" 
+                      value={deliveryDate}
+                      onChange={(e) => setDeliveryDate(e.target.value)}
+                      style={{ padding: '6px 8px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Observações</label>
+                    <input 
+                      type="text" 
+                      placeholder="Instruções de entrega..." 
+                      value={deliveryNotes}
+                      onChange={(e) => setDeliveryNotes(e.target.value)}
+                      style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div style={{ flexGrow: 1 }}></div>
 
-          <div className="checkout-row total">
+          <div className="checkout-row total" style={{ marginTop: '16px' }}>
             <span>TOTAL</span>
             <span>R$ {totalCart.toFixed(2)}</span>
           </div>
@@ -1920,7 +2041,23 @@ function PDVView({
           <button 
             className="btn-primary" 
             disabled={cart.length === 0}
-            onClick={onCheckout}
+            onClick={() => {
+              const deliveryDetails = requiresDelivery ? {
+                requiresDelivery: true,
+                address: deliveryAddress,
+                date: deliveryDate,
+                receiver: receiverName,
+                notes: deliveryNotes,
+                status: 'Pendente',
+                deliveredAt: null
+              } : null;
+              onCheckout(deliveryDetails);
+              setRequiresDelivery(false);
+              setDeliveryAddress('');
+              setDeliveryDate('');
+              setReceiverName('');
+              setDeliveryNotes('');
+            }}
           >
             <Check size={20} />
             Finalizar Venda (Confirmar)
@@ -4057,6 +4194,404 @@ ${JSON.stringify({
         </div>
       </div>
 
+    </div>
+  );
+}
+
+// ==========================================
+// 6. COMPONENTE: CONTROLE DE ENTREGAS
+// ==========================================
+function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
+  const [filterStatus, setFilterStatus] = useState('Pendente'); // 'Pendente' | 'Entregue' | 'Todas'
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Filtrar apenas as vendas que agendaram entrega
+  const deliverySales = sales.filter(s => s.deliveryDetails && s.deliveryDetails.requiresDelivery);
+
+  const filteredDeliveries = deliverySales.filter(s => {
+    const matchesStatus = filterStatus === 'Todas' || s.deliveryDetails.status === filterStatus;
+    const matchesSearch = 
+      s.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.deliveryDetails.receiver && s.deliveryDetails.receiver.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (s.deliveryDetails.address && s.deliveryDetails.address.toLowerCase().includes(searchTerm.toLowerCase()));
+    return matchesStatus && matchesSearch;
+  });
+
+  return (
+    <div className="section-card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
+        <h2 className="card-title">
+          <Truck size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
+          Painel de Controle de Entregas
+        </h2>
+        
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', flex: '1', justifyContent: 'flex-end', maxWidth: '600px' }}>
+          <div className="input-group" style={{ maxWidth: '250px', width: '100%' }}>
+            <Search className="input-icon" size={18} />
+            <input 
+              type="text" 
+              className="input-field" 
+              style={{ padding: '8px 12px 8px 36px', fontSize: '13px' }}
+              placeholder="Buscar por ID, recebedor..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '6px', backgroundColor: 'var(--bg-secondary)', padding: '4px', borderRadius: 'var(--radius-md)' }}>
+            {['Pendente', 'Entregue', 'Todas'].map(status => (
+              <button
+                key={status}
+                onClick={() => setFilterStatus(status)}
+                className={`tab-btn-pill ${filterStatus === status ? 'active' : ''}`}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: filterStatus === status ? 'var(--primary)' : 'transparent',
+                  color: filterStatus === status ? '#ffffff' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                {status === 'Todas' ? 'Todas' : (status === 'Pendente' ? 'Pendentes 🕒' : 'Entregues ✅')}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="table-container">
+        {filteredDeliveries.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+            <Truck size={40} style={{ opacity: 0.3, marginBottom: '12px' }} />
+            <p>Nenhuma entrega programada encontrada para este filtro.</p>
+          </div>
+        ) : (
+          <table className="custom-table table-responsive">
+            <thead>
+              <tr>
+                <th>Venda</th>
+                <th>Recebedor / Contato</th>
+                <th>Endereço de Entrega</th>
+                <th>Data Programada</th>
+                <th>Itens a Entregar</th>
+                <th style={{ textAlign: 'center' }}>Status</th>
+                <th style={{ textAlign: 'right' }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredDeliveries.map(sale => {
+                const det = sale.deliveryDetails;
+                const formattedDate = det.date 
+                  ? new Date(det.date + 'T00:00:00').toLocaleDateString('pt-BR') 
+                  : 'Não especificada';
+
+                return (
+                  <tr key={sale.id}>
+                    <td>
+                      <div>
+                        <strong>{sale.id}</strong>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          {new Date(sale.timestamp).toLocaleString('pt-BR')}
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <div>
+                        <strong>{det.receiver || 'Não informado'}</strong>
+                        {det.notes && <div style={{ fontSize: '11px', color: 'var(--brand-yellow)', fontWeight: '500' }}>Obs: {det.notes}</div>}
+                      </div>
+                    </td>
+                    <td><span style={{ fontSize: '12px' }}>{det.address || 'Não informado'}</span></td>
+                    <td><strong>{formattedDate}</strong></td>
+                    <td>
+                      <div style={{ fontSize: '11px', maxHeight: '60px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        {sale.items.map((item, idx) => (
+                          <span key={idx} style={{ color: 'var(--text-secondary)' }}>
+                            • {item.quantity}x {item.name.split(' ').slice(0, 3).join(' ')}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span className={`badge ${det.status === 'Entregue' ? 'badge-success' : 'badge-warning'}`} style={{
+                        padding: '4px 8px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        backgroundColor: det.status === 'Entregue' ? 'var(--success-glow)' : 'rgba(243, 180, 29, 0.15)',
+                        color: det.status === 'Entregue' ? 'var(--success)' : 'var(--brand-yellow)',
+                        border: `1px solid ${det.status === 'Entregue' ? 'var(--success)' : 'rgba(243, 180, 29, 0.3)'}`
+                      }}>
+                        {det.status === 'Entregue' ? 'ENTREGUE' : 'PENDENTE'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                        {det.status === 'Pendente' && (
+                          <button
+                            className="btn-success"
+                            style={{ padding: '6px 10px', fontSize: '11px', backgroundColor: 'var(--success)', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            onClick={() => onUpdateDeliveryStatus(sale.id, 'Entregue', new Date().toISOString())}
+                          >
+                            <CheckCircle size={12} /> Entregar
+                          </button>
+                        )}
+                        <button
+                          className="btn-secondary"
+                          style={{ padding: '6px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          onClick={() => onGenerateInvoice(sale)}
+                        >
+                          <FileText size={12} /> Nota Fiscal
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 7. COMPONENTE: MODAL DE NOTA FISCAL (DANFE SIMPLIFICADA)
+// ==========================================
+function InvoiceModal({ sale, onClose }) {
+  if (!sale) return null;
+
+  const total = sale.totalPrice;
+  const cnpj = "62.002.153/0001-25";
+  const dateFormatted = new Date(sale.timestamp).toLocaleString('pt-BR');
+  
+  // Chave de acesso simulada para dar mais realismo
+  const accessKey = Array.from({ length: 11 }, () => Math.floor(Math.random() * 9000 + 1000).toString()).join(' ');
+
+  const handlePrint = () => {
+    const printContent = document.getElementById('danfe-invoice-print-area').innerHTML;
+    
+    const printWindow = window.open('', '_blank', 'width=800,height=800');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Nota Fiscal de Consumidor - Novo Lar</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              font-size: 11px;
+              color: #000;
+              margin: 20px;
+              line-height: 1.3;
+            }
+            .center { text-align: center; }
+            .right { text-align: right; }
+            .bold { font-weight: bold; }
+            .border-box {
+              border: 1px solid #000;
+              padding: 8px;
+              margin-bottom: 8px;
+              border-radius: 4px;
+            }
+            .header-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 8px;
+            }
+            .header-table td {
+              border: 1px solid #000;
+              padding: 6px;
+              vertical-align: top;
+            }
+            .title-danfe {
+              font-size: 14px;
+              font-weight: bold;
+              text-align: center;
+              margin-bottom: 2px;
+            }
+            .items-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 8px 0;
+            }
+            .items-table th, .items-table td {
+              border: 1px solid #000;
+              padding: 6px;
+              text-align: left;
+            }
+            .items-table th {
+              background-color: #f2f2f2;
+              font-weight: bold;
+            }
+            .totals-table {
+              width: 50%;
+              margin-left: auto;
+              border-collapse: collapse;
+              margin-top: 8px;
+            }
+            .totals-table td {
+              padding: 4px;
+              border: 1px solid #000;
+            }
+            .qr-code-placeholder {
+              width: 90px;
+              height: 90px;
+              border: 1px solid #000;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 8px;
+              font-weight: bold;
+              background-color: #eee;
+            }
+            .footer-notes {
+              font-size: 9px;
+              color: #555;
+              text-align: center;
+              margin-top: 15px;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContent}
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '650px', width: '90%', padding: '24px' }}>
+        <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <FileText size={20} style={{ color: 'var(--primary)' }} />
+            Visualizar Nota Fiscal (Simulada)
+          </h2>
+          <button className="close-btn-x" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px' }}>✕</button>
+        </div>
+
+        <div className="modal-body" style={{ maxHeight: '500px', overflowY: 'auto', padding: '10px 0' }}>
+          <div id="danfe-invoice-print-area" style={{ backgroundColor: '#fff', padding: '15px', color: '#000', border: '1px solid #ccc', borderRadius: '4px' }}>
+            <table className="header-table" style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '8px' }}>
+              <tbody>
+                <tr>
+                  <td style={{ width: '60%', border: '1px solid #000', padding: '6px' }}>
+                    <strong style={{ fontSize: '12px' }}>NOVO LAR - CASA &amp; CONSTRUÇÃO</strong><br />
+                    <span>CNPJ: {cnpj}</span><br />
+                    <span>Rua das Flores, 450 - Centro</span><br />
+                    <span>Nova Iguaçu - RJ / CEP: 26210-000</span><br />
+                    <span>Tel: (21) 2667-8899</span>
+                  </td>
+                  <td style={{ width: '40%', border: '1px solid #000', padding: '6px', textAlign: 'center', verticalAlign: 'middle' }}>
+                    <div className="title-danfe">DANFE Simplificado</div>
+                    <div style={{ fontSize: '9px', marginTop: '4px' }}>Documento Auxiliar da Nota Fiscal de Consumidor Eletrônica</div>
+                    <div style={{ fontSize: '10px', fontWeight: 'bold', marginTop: '8px' }}>Nº da Venda: {sale.id}</div>
+                    <div style={{ fontSize: '10px', marginTop: '4px' }}>Emissão: {dateFormatted}</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div className="border-box" style={{ border: '1px solid #000', padding: '8px', marginBottom: '8px', borderRadius: '4px' }}>
+              <div className="bold" style={{ textTransform: 'uppercase', marginBottom: '4px' }}>Informações de Entrega / Destinatário</div>
+              {sale.deliveryDetails && sale.deliveryDetails.requiresDelivery ? (
+                <div>
+                  <strong>Recebedor:</strong> {sale.deliveryDetails.receiver || 'Não especificado'}<br />
+                  <strong>Endereço:</strong> {sale.deliveryDetails.address || 'Não especificado'}<br />
+                  <strong>Data Programada:</strong> {sale.deliveryDetails.date ? new Date(sale.deliveryDetails.date + 'T00:00:00').toLocaleDateString('pt-BR') : 'Não especificada'}<br />
+                  {sale.deliveryDetails.notes && <span><strong>Observações:</strong> {sale.deliveryDetails.notes}</span>}
+                </div>
+              ) : (
+                <div>
+                  <span>Retirada imediata no balcão pelo cliente.</span><br />
+                  <span>Consumidor não identificado.</span>
+                </div>
+              )}
+            </div>
+
+            <table className="items-table" style={{ width: '100%', borderCollapse: 'collapse', margin: '8px 0' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#f2f2f2' }}>
+                  <th style={{ border: '1px solid #000', padding: '6px', fontSize: '10px' }}>Item</th>
+                  <th style={{ border: '1px solid #000', padding: '6px', fontSize: '10px' }}>Descrição</th>
+                  <th style={{ border: '1px solid #000', padding: '6px', fontSize: '10px', textAlign: 'center' }}>Qtd</th>
+                  <th style={{ border: '1px solid #000', padding: '6px', fontSize: '10px', textAlign: 'right' }}>V. Unit (R$)</th>
+                  <th style={{ border: '1px solid #000', padding: '6px', fontSize: '10px', textAlign: 'right' }}>V. Total (R$)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sale.items.map((item, index) => (
+                  <tr key={index}>
+                    <td style={{ border: '1px solid #000', padding: '6px', fontSize: '10px', textAlign: 'center' }}>{index + 1}</td>
+                    <td style={{ border: '1px solid #000', padding: '6px', fontSize: '10px' }}>{item.name}</td>
+                    <td style={{ border: '1px solid #000', padding: '6px', fontSize: '10px', textAlign: 'center' }}>{item.quantity}</td>
+                    <td style={{ border: '1px solid #000', padding: '6px', fontSize: '10px', textAlign: 'right' }}>{item.salePrice.toFixed(2)}</td>
+                    <td style={{ border: '1px solid #000', padding: '6px', fontSize: '10px', textAlign: 'right' }}>{(item.salePrice * item.quantity).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <table className="totals-table" style={{ width: '60%', marginLeft: 'auto', borderCollapse: 'collapse', marginTop: '8px' }}>
+              <tbody>
+                <tr>
+                  <td style={{ border: '1px solid #000', padding: '4px', fontSize: '10px' }}><strong>Valor Total dos Produtos</strong></td>
+                  <td style={{ border: '1px solid #000', padding: '4px', fontSize: '10px', textAlign: 'right' }}>R$ {total.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td style={{ border: '1px solid #000', padding: '4px', fontSize: '10px' }}><strong>Desconto</strong></td>
+                  <td style={{ border: '1px solid #000', padding: '4px', fontSize: '10px', textAlign: 'right' }}>R$ 0,00</td>
+                </tr>
+                <tr style={{ backgroundColor: '#eee' }}>
+                  <td style={{ border: '1px solid #000', padding: '4px', fontSize: '10px' }}><strong>VALOR TOTAL LÍQUIDO</strong></td>
+                  <td style={{ border: '1px solid #000', padding: '4px', fontSize: '10px', textAlign: 'right', fontWeight: 'bold' }}>R$ {total.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td style={{ border: '1px solid #000', padding: '4px', fontSize: '10px' }}><strong>Forma de Pagamento</strong></td>
+                  <td style={{ border: '1px solid #000', padding: '4px', fontSize: '10px', textAlign: 'right' }}>{sale.paymentMethod}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div style={{ display: 'flex', gap: '20px', marginTop: '16px', alignItems: 'center', borderTop: '1px solid #000', paddingTop: '12px' }}>
+              <div className="qr-code-placeholder" style={{ width: '90px', height: '90px', border: '1px solid #000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: '8px', fontWeight: 'bold', backgroundColor: '#eee', textAlign: 'center', padding: '4px' }}>
+                <span style={{ fontSize: '12px', marginBottom: '4px' }}>QR CODE</span>
+                <span style={{ fontSize: '6px' }}>Simulador Auxiliar</span>
+                <span style={{ fontSize: '5px', wordBreak: 'break-all', marginTop: '4px' }}>NFC-e Nº {sale.id}</span>
+              </div>
+              <div style={{ flex: 1, fontSize: '9px' }}>
+                <strong>CHAVE DE ACESSO PARA CONSULTA NO PORTAL DA SEFAZ:</strong><br />
+                <span style={{ letterSpacing: '0.5px', fontFamily: 'monospace' }}>{accessKey}</span><br />
+                <span style={{ display: 'block', marginTop: '6px', fontStyle: 'italic' }}>Consulta pública no portal nacional da NF-e (www.nfe.fazenda.gov.br)</span>
+              </div>
+            </div>
+
+            <div className="footer-notes" style={{ fontSize: '8px', color: '#555', textAlign: 'center', marginTop: '15px', borderTop: '1px dashed #555', paddingTop: '8px' }}>
+              DOCUMENTO AUXILIAR DE NOTA FISCAL DE CONSUMIDOR ELETRÔNICA SIMULADA.<br />
+              SEM EFEITOS DE HOMOLOGAÇÃO FISCAL COMERCIAL - USO EXCLUSIVO DO GERENCIADOR DE ESTOQUE NOVO LAR.
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '16px' }}>
+          <button className="close-btn" style={{ padding: '10px 20px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: '600' }} onClick={onClose}>Fechar</button>
+          <button className="btn-primary" onClick={handlePrint} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Printer size={16} /> Imprimir Nota Fiscal
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

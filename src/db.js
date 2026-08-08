@@ -174,7 +174,7 @@ export async function getSales() {
   return db.sales || [];
 }
 
-export async function registerSale(saleItems, paymentMethod) {
+export async function registerSale(saleItems, paymentMethod, deliveryDetails = null) {
   const db = await loadDB();
   if (!db.sales) db.sales = [];
   if (!db.products) db.products = [];
@@ -212,6 +212,7 @@ export async function registerSale(saleItems, paymentMethod) {
     profit: parseFloat((totalPrice - totalCost).toFixed(2)),
     paymentMethod,
     storeId: getStoreId(),
+    deliveryDetails,
     synced: false
   };
 
@@ -252,6 +253,23 @@ export async function registerSale(saleItems, paymentMethod) {
   }
 
   return { sales: db.sales, products: db.products };
+}
+
+export async function updateSaleDeliveryStatus(saleId, status, deliveredAt = null) {
+  const db = await loadDB();
+  if (!db.sales) return [];
+
+  const idx = db.sales.findIndex(s => s.id === saleId);
+  if (idx !== -1) {
+    if (!db.sales[idx].deliveryDetails) {
+      db.sales[idx].deliveryDetails = {};
+    }
+    db.sales[idx].deliveryDetails.status = status;
+    db.sales[idx].deliveryDetails.deliveredAt = deliveredAt;
+    db.sales[idx].synced = false;
+    await saveDB(db);
+  }
+  return db.sales;
 }
 
 // GASTOS / DESPESAS
