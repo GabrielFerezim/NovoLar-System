@@ -3878,148 +3878,153 @@ ${JSON.stringify({
                   gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
                   gap: '12px'
                 }}>
-                  {/* Card 1: Margem e Rentabilidade */}
+                  {/* Card 1: Margem Comercial Média */}
                   <div style={{
-                    padding: '12px 14px',
+                    padding: '14px',
                     borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-color)',
                     backgroundColor: 'var(--bg-tertiary)',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    minHeight: '82px'
+                    minHeight: '120px'
                   }}>
                     <div>
-                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
-                        Margem Comercial Média
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                          Margem Comercial Média
+                        </span>
+                        <span style={{ fontSize: '11px' }}>
+                          {averageMargin >= 30 ? '🟢 Boa' : averageMargin >= 15 ? '🟡 Regular' : '🔴 Baixa'}
+                        </span>
                       </div>
-                      <div style={{ fontSize: '18px', fontWeight: '800', color: averageMargin >= 30 ? 'var(--success)' : averageMargin >= 15 ? 'var(--warning)' : 'var(--danger)', lineHeight: '1.2' }}>
+                      <div style={{ fontSize: '20px', fontWeight: '800', color: averageMargin >= 30 ? 'var(--success)' : averageMargin >= 15 ? 'var(--warning)' : 'var(--danger)', lineHeight: '1.2', marginBottom: '4px' }}>
                         {averageMargin.toFixed(1)}%
                       </div>
                     </div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
-                      {averageMargin >= 30 ? '🟢 Margem comercial excelente' : averageMargin >= 15 ? '🟡 Margem comercial regular' : '🔴 Margem baixa (Markup crítico)'}
-                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.3' }}>
+                      Média de lucro líquido percentual sobre o valor das mercadorias vendidas.
+                    </p>
                   </div>
 
                   {/* Card 2: Ticket Médio */}
                   <div style={{
-                    padding: '12px 14px',
+                    padding: '14px',
                     borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-color)',
                     backgroundColor: 'var(--bg-tertiary)',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    minHeight: '82px'
+                    minHeight: '120px'
                   }}>
                     <div>
                       <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
                         Ticket Médio por Venda
                       </div>
-                      <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--primary)', lineHeight: '1.2' }}>
+                      <div style={{ fontSize: '20px', fontWeight: '800', color: 'var(--primary)', lineHeight: '1.2', marginBottom: '4px' }}>
                         R$ {ticketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
-                      Base: <strong>{salesCount}</strong> faturamentos hoje/período.
-                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.3' }}>
+                      Valor médio gasto por cada cliente em cada compra ({salesCount} vendas no período).
+                    </p>
                   </div>
 
-                  {/* Card 3: Capital Imobilizado */}
+                  {/* Card 3: Capital em Estoque */}
                   <div style={{
-                    padding: '12px 14px',
+                    padding: '14px',
                     borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-color)',
                     backgroundColor: 'var(--bg-tertiary)',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    minHeight: '82px'
+                    minHeight: '120px'
                   }}>
                     <div>
                       <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
                         Capital Total no Estoque
                       </div>
-                      <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)', lineHeight: '1.2' }}>
+                      <div style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-primary)', lineHeight: '1.2', marginBottom: '4px' }}>
                         R$ {totalStockCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
-                      Parados: <strong style={{ color: deadStockCost > 0 ? 'var(--danger)' : 'inherit' }}>R$ {deadStockCost.toLocaleString('pt-BR')}</strong> (sem giro).
-                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.3' }}>
+                      Custo total pago para adquirir os produtos atualmente parados no estoque (Giro zero: R$ {deadStockCost.toLocaleString('pt-BR')}).
+                    </p>
                   </div>
 
-                  {/* Card 4: Necessidade de Caixa */}
+                  {/* Card 4: Investimento de Reposição */}
                   <div style={{
-                    padding: '12px 14px',
+                    padding: '14px',
                     borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-color)',
                     backgroundColor: 'var(--bg-tertiary)',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    minHeight: '82px'
+                    minHeight: '120px'
                   }}>
                     <div>
                       <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
                         Investimento de Reposição
                       </div>
-                      <div style={{ fontSize: '18px', fontWeight: '800', color: replacementCost > 0 ? 'var(--warning)' : 'var(--success)', lineHeight: '1.2' }}>
+                      <div style={{ fontSize: '20px', fontWeight: '800', color: replacementCost > 0 ? 'var(--warning)' : 'var(--success)', lineHeight: '1.2', marginBottom: '4px' }}>
                         R$ {replacementCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
-                      {replacementCost > 0 ? `Repor ${emAlertaEstoque.length} itens abaixo do mínimo.` : '🟢 Estoque acima do mínimo.'}
-                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.3' }}>
+                      Custo necessário para comprar produtos que estão abaixo do estoque mínimo ({emAlertaEstoque.length} itens).
+                    </p>
                   </div>
 
-                  {/* Card 5: Potencial de Venda */}
+                  {/* Card 5: Faturamento Potencial */}
                   <div style={{
-                    padding: '12px 14px',
+                    padding: '14px',
                     borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-color)',
                     backgroundColor: 'var(--bg-tertiary)',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    minHeight: '82px'
+                    minHeight: '120px'
                   }}>
                     <div>
                       <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
                         Faturamento Potencial
                       </div>
-                      <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--primary)', lineHeight: '1.2' }}>
+                      <div style={{ fontSize: '20px', fontWeight: '800', color: 'var(--primary)', lineHeight: '1.2', marginBottom: '4px' }}>
                         R$ {potentialRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
-                      Valor total estimado se vender tudo.
-                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.3' }}>
+                      Dinheiro total que entrará no caixa caso você venda todo o estoque atual pelo preço final de balcão.
+                    </p>
                   </div>
 
-                  {/* Card 6: Saúde Operacional */}
+                  {/* Card 6: Resultado Líquido Operacional */}
                   <div style={{
-                    padding: '12px 14px',
+                    padding: '14px',
                     borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-color)',
                     backgroundColor: 'var(--bg-tertiary)',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    minHeight: '82px'
+                    minHeight: '120px'
                   }}>
                     <div>
                       <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
                         Resultado Líquido Operacional
                       </div>
-                      <div style={{ fontSize: '18px', fontWeight: '800', color: netProfit >= 0 ? 'var(--success)' : 'var(--danger)', lineHeight: '1.2' }}>
+                      <div style={{ fontSize: '20px', fontWeight: '800', color: netProfit >= 0 ? 'var(--success)' : 'var(--danger)', lineHeight: '1.2', marginBottom: '4px' }}>
                         R$ {netProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
-                      {netProfit >= 0 ? '🟢 Operação comercial positiva' : '🔴 Operação deficitária (rever custos)'}
-                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.3' }}>
+                      Lucro bruto das vendas subtraindo todas as despesas comerciais registradas no período.
+                    </p>
                   </div>
 
                 </div>
