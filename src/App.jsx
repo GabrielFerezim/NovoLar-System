@@ -4487,18 +4487,25 @@ function InvoiceModal({ sale, onClose }) {
             <table className="header-table" style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '8px' }}>
               <tbody>
                 <tr>
-                  <td style={{ width: '60%', border: '1px solid #000', padding: '6px' }}>
+                  <td style={{ width: '18%', border: '1px solid #000', padding: '6px', textAlign: 'center', verticalAlign: 'middle' }}>
+                    <img 
+                      src={window.location.origin + "/logo.png"} 
+                      alt="Logo Novo Lar" 
+                      style={{ maxWidth: '80px', height: 'auto', display: 'block', margin: '0 auto' }} 
+                    />
+                  </td>
+                  <td style={{ width: '47%', border: '1px solid #000', padding: '6px', verticalAlign: 'top' }}>
                     <strong style={{ fontSize: '12px' }}>NOVO LAR - CASA &amp; CONSTRUÇÃO</strong><br />
                     <span>CNPJ: {cnpj}</span><br />
-                    <span>Rua das Flores, 450 - Centro</span><br />
-                    <span>Nova Iguaçu - RJ / CEP: 26210-000</span><br />
-                    <span>Tel: (21) 2667-8899</span>
+                    <span>Rua das Rosas, 1077 - Jardim Novo Eden</span><br />
+                    <span>Santa Isabel - SP / CEP: 07500-000</span><br />
+                    <span>Tel: (11) 4656-8183</span>
                   </td>
-                  <td style={{ width: '40%', border: '1px solid #000', padding: '6px', textAlign: 'center', verticalAlign: 'middle' }}>
-                    <div className="title-danfe">DANFE Simplificado</div>
-                    <div style={{ fontSize: '9px', marginTop: '4px' }}>Documento Auxiliar da Nota Fiscal de Consumidor Eletrônica</div>
-                    <div style={{ fontSize: '10px', fontWeight: 'bold', marginTop: '8px' }}>Nº da Venda: {sale.id}</div>
-                    <div style={{ fontSize: '10px', marginTop: '4px' }}>Emissão: {dateFormatted}</div>
+                  <td style={{ width: '35%', border: '1px solid #000', padding: '6px', textAlign: 'center', verticalAlign: 'middle' }}>
+                    <div className="title-danfe" style={{ fontSize: '13px', fontWeight: 'bold' }}>DANFE Simplificado</div>
+                    <div style={{ fontSize: '8px', color: '#555', marginTop: '2px', lineHeight: '1.2' }}>Documento Auxiliar da Nota Fiscal de Consumidor Eletrônica</div>
+                    <div style={{ fontSize: '10px', fontWeight: 'bold', marginTop: '6px' }}>Nº da Venda: {sale.id}</div>
+                    <div style={{ fontSize: '9px', marginTop: '2px' }}>Emissão: {dateFormatted}</div>
                   </td>
                 </tr>
               </tbody>
