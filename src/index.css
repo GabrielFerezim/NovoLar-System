@@ -1799,19 +1799,6 @@ body {
   line-height: 1.5;
 }
 
-/* Layout Alignment Fixes */
-.ai-assistant-layout {
-  display: grid;
-  grid-template-columns: 1.5fr 1.5fr;
-  gap: 24px;
-  align-items: stretch; /* Stretch columns to match height */
-}
-
-.ai-chat-card {
-  height: 100%; /* Stretch to match left column */
-  min-height: 580px;
-}
-
 /* Category Hover Transitions */
 .category-stock-item {
   padding: 4px;
@@ -1821,6 +1808,129 @@ body {
 
 .category-stock-item:hover {
   background-color: var(--bg-tertiary);
+}
+
+/* ==========================================================================
+   RESPONSIVIDADE MOBILE COMPLETA (Telas <= 768px)
+   ========================================================================== */
+
+/* Rolagem Horizontal de Tabelas */
+.table-responsive,
+.cart-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+  /* Hambúrguer e Menu Mobile */
+  .mobile-menu-toggle {
+    display: flex !important;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: -270px;
+    bottom: 0;
+    z-index: 1000;
+    height: 100vh;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 4px 0 15px rgba(0, 0, 0, 0.1);
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(270px);
+  }
+
+  /* Contêiner de Layout App */
+  .app-container {
+    flex-direction: column;
+  }
+
+  /* Ajustes do Cabeçalho Superior */
+  .top-header {
+    height: 60px;
+    padding: 0 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+
+  .header-title {
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+  }
+
+  .header-subtitle {
+    display: none !important;
+  }
+
+  .header-actions {
+    gap: 8px;
+  }
+
+  /* Ocultar status do scanner no mobile para economizar espaço */
+  .scanner-status {
+    display: none !important;
+  }
+
+  .btn-text-responsive {
+    display: none !important;
+  }
+
+  /* Contêiner das Páginas */
+  .page-container {
+    padding: 12px;
+    gap: 16px;
+    overflow-y: auto;
+    height: calc(100vh - 60px);
+  }
+
+  /* PDV Responsivo */
+  .pdv-layout {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    overflow: visible !important;
+    gap: 16px;
+  }
+
+  .pdv-left-panel {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .pdv-right-panel {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .cart-table-wrapper {
+    max-height: 350px;
+  }
+
+  /* Grid do Diagnóstico Comercial da IA */
+  .ai-diagnostic-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Assistente de IA / Insights no Mobile */
+  .ai-assistant-layout {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .ai-assistant-left-col {
+    height: auto !important;
+    overflow-y: visible !important;
+    padding-right: 0;
+  }
+
+  .ai-chat-card {
+    height: 480px !important;
+  }
 }
 
 

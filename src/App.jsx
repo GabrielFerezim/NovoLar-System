@@ -26,7 +26,8 @@ import {
   Download,
   Upload,
   Database,
-  Send
+  Send,
+  Menu
 } from 'lucide-react';
 import { 
   getProducts, 
@@ -73,6 +74,7 @@ export default function App() {
   // Controle de Abas: 'pdv', 'daily-data', 'calendar', 'admin-products', 'admin-finance'
   const [activeTab, setActiveTab] = useState('pdv');
   const [isAdminMenuOpen, setIsAdminMenuOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Auto-expandir menu de administração quando uma aba admin estiver ativa
   useEffect(() => {
@@ -465,8 +467,26 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {/* Backdrop do menu mobile */}
+      {isMobileMenuOpen && (
+        <div 
+          className="sidebar-backdrop" 
+          onClick={() => setIsMobileMenuOpen(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.4)',
+            zIndex: 998,
+            animation: 'fadeIn 0.2s ease-out'
+          }}
+        />
+      )}
+
       {/* Sidebar Lateral */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${isMobileMenuOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-brand">
           <div className="brand-icon" style={{ width: '40px', height: '40px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
             <ShoppingBag size={20} />
@@ -484,7 +504,7 @@ export default function App() {
           <li>
             <button 
               className={`menu-item-btn ${activeTab === 'pdv' ? 'active' : ''}`}
-              onClick={() => setActiveTab('pdv')}
+              onClick={() => { setActiveTab('pdv'); setIsMobileMenuOpen(false); }}
             >
               <ShoppingBag size={20} />
               Frente de Caixa (PDV)
@@ -493,7 +513,7 @@ export default function App() {
           <li>
             <button 
               className={`menu-item-btn ${activeTab === 'daily-data' ? 'active' : ''}`}
-              onClick={() => setActiveTab('daily-data')}
+              onClick={() => { setActiveTab('daily-data'); setIsMobileMenuOpen(false); }}
             >
               <LayoutDashboard size={20} />
               Dados Diários (Hoje)
@@ -502,7 +522,7 @@ export default function App() {
           <li>
             <button 
               className={`menu-item-btn ${activeTab === 'calendar' ? 'active' : ''}`}
-              onClick={() => setActiveTab('calendar')}
+              onClick={() => { setActiveTab('calendar'); setIsMobileMenuOpen(false); }}
             >
               <Calendar size={20} />
               Relatórios por Calendário
@@ -526,7 +546,7 @@ export default function App() {
                 <li>
                   <button 
                     className={`submenu-item-btn ${activeTab === 'admin-products' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('admin-products')}
+                    onClick={() => { setActiveTab('admin-products'); setIsMobileMenuOpen(false); }}
                   >
                     <Package size={16} />
                     Cadastrar Produtos
@@ -535,7 +555,7 @@ export default function App() {
                 <li>
                   <button 
                     className={`submenu-item-btn ${activeTab === 'admin-finance' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('admin-finance')}
+                    onClick={() => { setActiveTab('admin-finance'); setIsMobileMenuOpen(false); }}
                   >
                     <TrendingUp size={16} />
                     Controle Geral
@@ -544,7 +564,7 @@ export default function App() {
                 <li>
                   <button 
                     className={`submenu-item-btn ${activeTab === 'admin-insights' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('admin-insights')}
+                    onClick={() => { setActiveTab('admin-insights'); setIsMobileMenuOpen(false); }}
                   >
                     <Sparkles size={16} />
                     Insights (IA)
@@ -619,8 +639,28 @@ export default function App() {
       {/* Área Principal de Conteúdo */}
       <main className="main-content">
         {/* Top Header */}
-        <header className="top-header">
-          <div className="header-title-container">
+        <header className="top-header" style={{ display: 'flex', alignItems: 'center' }}>
+          {/* Botão Hambúrguer Mobile */}
+          <button 
+            type="button" 
+            className="mobile-menu-toggle"
+            onClick={() => setIsMobileMenuOpen(true)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+              padding: '8px',
+              marginRight: '8px',
+              display: 'none',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            <Menu size={24} />
+          </button>
+
+          <div className="header-title-container" style={{ flexGrow: 1 }}>
             <h1 className="header-title">
               {activeTab === 'daily-data' && 'Dados Diários (Hoje)'}
               {activeTab === 'calendar' && 'Calendário de Relatórios'}
@@ -647,14 +687,14 @@ export default function App() {
             </div>
             
             {(activeTab === 'admin-products' || activeTab === 'products') && (
-              <button className="btn-primary" style={{ padding: '10px 16px', fontSize: '14px' }} onClick={() => { setEditingProduct(null); setProductModalOpen(true); }}>
-                <Plus size={16} /> Cadastrar Produto
+              <button className="btn-primary" style={{ padding: '10px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => { setEditingProduct(null); setProductModalOpen(true); }}>
+                <Plus size={16} /> <span className="btn-text-responsive">Cadastrar Produto</span>
               </button>
             )}
 
             {(activeTab === 'admin-finance' || activeTab === 'history') && (
-              <button className="btn-primary" style={{ padding: '10px 16px', fontSize: '14px' }} onClick={() => setExpenseModalOpen(true)}>
-                <Plus size={16} /> Registrar Despesa
+              <button className="btn-primary" style={{ padding: '10px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => setExpenseModalOpen(true)}>
+                <Plus size={16} /> <span className="btn-text-responsive">Registrar Despesa</span>
               </button>
             )}
           </div>
