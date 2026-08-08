@@ -783,6 +783,7 @@ export default function App() {
                 setProductModalOpen(true);
               }}
               currentCashBalance={netCash}
+              onAddToCart={addToCartFromScan}
             />
           )}
 
@@ -1424,7 +1425,8 @@ function PDVView({
   onCheckout,
   onSimulateScan,
   onQuickRegister,
-  currentCashBalance = 0
+  currentCashBalance = 0,
+  onAddToCart
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -1590,14 +1592,7 @@ function PDVView({
       return;
     }
     
-    // Adiciona ao carrinho
-    onUpdateCartQty(product.id, 1);
-    // Se não existia no carrinho e a qty era 0, adiciona manualmente
-    const isNew = !cart.find(c => c.id === product.id);
-    if (isNew) {
-      cart.push({ ...product, quantity: 1 });
-      onUpdateCartQty(product.id, 0); // Hack para renderizar atualizando
-    }
+    onAddToCart(product);
 
     setSearchTerm('');
     setSearchResults([]);
@@ -2387,15 +2382,16 @@ function ProductModal({ product, onClose, onSave }) {
           <div className="form-row">
             <div className="form-group" style={{ position: 'relative' }}>
               <label>Código de Barras (EAN) *</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
                 <input 
                   type="text" 
                   value={code} 
                   onChange={(e) => setCode(e.target.value)} 
                   placeholder="Bipe com o leitor ou digite..." 
                   required
+                  style={{ flex: 1, minWidth: 0 }}
                 />
-                <button type="button" className="btn-secondary" style={{ padding: '0 12px' }} onClick={generateEan}>
+                <button type="button" className="btn-secondary" style={{ padding: '0 16px', whiteSpace: 'nowrap' }} onClick={generateEan}>
                   Gerar
                 </button>
               </div>

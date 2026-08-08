@@ -370,8 +370,9 @@ export async function runBackgroundSync() {
       }
 
       if (cloudProducts) {
-        // Mesclar produtos da nuvem para o local
-        const localProducts = db.products || [];
+        // Recarregar o banco fresco para evitar sobrescrever vendas recentes concorrentes
+        const freshDb = await loadDB();
+        const localProducts = freshDb.products || [];
         const merged = [...localProducts];
         
         cloudProducts.forEach(cp => {
@@ -396,8 +397,8 @@ export async function runBackgroundSync() {
           }
         });
         
-        db.products = merged;
-        await saveDB(db);
+        freshDb.products = merged;
+        await saveDB(freshDb);
         return { status: 'success', message: 'Estoque sincronizado' };
       }
     } catch (e) {
@@ -410,6 +411,8 @@ export async function runBackgroundSync() {
   console.log(`Processando fila de sincronização offline: ${db.syncQueue.length} itens.`);
   const newQueue = [...db.syncQueue];
   let processedCount = 0;
+  const processedSales = [];
+  const processedExpenses = [];
 
   for (const job of db.syncQueue) {
     try {
@@ -454,7 +457,7 @@ export async function runBackgroundSync() {
               await supabase.from('products').update({ stock: prod.stock }).eq('id', prod.id);
             }
           }
-          sale.synced = true;
+          processedSales.push(sale.id);
         }
       }
       else if (job.type === 'expense') {
@@ -469,7 +472,7 @@ export async function runBackgroundSync() {
             store_id: getStoreId()
           });
           if (error) throw error;
-          exp.synced = true;
+          processedExpenses.push(exp.id);
         }
       }
       else if (job.type === 'delete_product') {
@@ -489,8 +492,21 @@ export async function runBackgroundSync() {
     }
   }
 
-  db.syncQueue = newQueue;
-  await saveDB(db);
+  // Recarregar banco fresco e salvar atualizações de status de forma segura!
+  const freshDb = await loadDB();
+  freshDb.syncQueue = newQueue;
+  
+  processedSales.forEach(saleId => {
+    const sale = freshDb.sales?.find(s => s.id === saleId);
+    if (sale) sale.synced = true;
+  });
+  
+  processedExpenses.forEach(expId => {
+    const exp = freshDb.expenses?.find(e => e.id === expId);
+    if (exp) exp.synced = true;
+  });
+
+  await saveDB(freshDb);
   
   return { 
     status: processedCount > 0 ? 'syncing' : 'offline', 
