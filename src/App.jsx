@@ -1,0 +1,4022 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  LayoutDashboard, 
+  ShoppingBag, 
+  Package, 
+  History, 
+  DollarSign, 
+  TrendingUp, 
+  AlertTriangle, 
+  Barcode, 
+  Plus, 
+  Search, 
+  Trash2, 
+  Edit3, 
+  Check, 
+  X, 
+  CreditCard, 
+  Coins, 
+  Smartphone,
+  Info,
+  Calendar,
+  Layers,
+  Sparkles,
+  Printer,
+  CheckCircle,
+  Download,
+  Upload,
+  Database,
+  Send
+} from 'lucide-react';
+import { 
+  getProducts, 
+  saveProduct, 
+  deleteProduct, 
+  getSales, 
+  registerSale, 
+  getExpenses, 
+  saveExpense, 
+  deleteExpense,
+  loadDB,
+  saveDB,
+  getStoreId,
+  setStoreId,
+  runBackgroundSync
+} from './db';
+import { supabase } from './supabase';
+
+export default function App() {
+  // Estado Global do Banco de Dados
+  const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Controle de Sessão de Login
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('novo_lar_is_logged_in') === 'true';
+    }
+    return false;
+  });
+
+  const [userRole, setUserRole] = useState(() => {
+    return localStorage.getItem('novo_lar_user_role') || 'admin';
+  });
+  const [lastSaleReceipt, setLastSaleReceipt] = useState(null);
+
+  // Estados de Controle Multi-Loja e Nuvem
+  const [storeId, setStoreIdState] = useState(getStoreId());
+  const [syncStatus, setSyncStatus] = useState('Conectando...');
+  const [syncPendingCount, setSyncPendingCount] = useState(0);
+
+  // Controle de Abas: 'pdv', 'daily-data', 'calendar', 'admin-products', 'admin-finance'
+  const [activeTab, setActiveTab] = useState('pdv');
+  const [isAdminMenuOpen, setIsAdminMenuOpen] = useState(false);
+
+  // Auto-expandir menu de administração quando uma aba admin estiver ativa
+  useEffect(() => {
+    if (activeTab.startsWith('admin')) {
+      setIsAdminMenuOpen(true);
+    }
+  }, [activeTab]);
+
+  // Função para calcular o saldo de caixa acumulado antes de uma data específica
+  const getCashBalanceAtDate = (dateString) => {
+    const targetDate = new Date(dateString + 'T00:00:00');
+    
+    const priorSales = filteredSales.filter(s => {
+      const saleDate = new Date(s.timestamp.split('T')[0] + 'T00:00:00');
+      return saleDate < targetDate;
+    });
+    
+    const priorExpenses = filteredExpenses.filter(e => {
+      const expDate = new Date(e.timestamp.split('T')[0] + 'T00:00:00');
+      return expDate < targetDate;
+    });
+    
+    const totalPriorSales = priorSales.reduce((sum, s) => sum + s.totalPrice, 0);
+    const totalPriorExpenses = priorExpenses.reduce((sum, e) => sum + e.amount, 0);
+    
+    return totalPriorSales - totalPriorExpenses;
+  };
+
+  const handleLogin = (store, role = 'admin') => {
+    localStorage.setItem('novo_lar_is_logged_in', 'true');
+    localStorage.setItem('novo_lar_store_id', store);
+    localStorage.setItem('novo_lar_user_role', 'admin');
+    setStoreId(store);
+    setStoreIdState(store);
+    setUserRole('admin');
+    setIsLoggedIn(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('novo_lar_is_logged_in');
+    localStorage.removeItem('novo_lar_user_role');
+    setIsLoggedIn(false);
+  };
+
+  const handleExportBackup = () => {
+    try {
+      const backupData = {
+        products: products,
+        sales: sales,
+        expenses: expenses
+      };
+      const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backupData, null, 2))}`;
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', jsonString);
+      downloadAnchor.setAttribute('download', `construcontrol_backup_${new Date().toISOString().split('T')[0]}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    } catch (err) {
+      alert("Erro ao exportar backup: " + err.message);
+    }
+  };
+
+  const handleImportBackup = (e) => {
+    const fileReader = new FileReader();
+    const file = e.target.files[0];
+    if (!file) return;
+
+    fileReader.onload = async (event) => {
+      try {
+        const parsedData = JSON.parse(event.target.result);
+        if (!parsedData.products || !parsedData.sales || !parsedData.expenses) {
+          alert("Arquivo de backup inválido. Ele deve conter produtos, vendas e despesas.");
+          return;
+        }
+
+        if (confirm("ATENÇÃO: Importar este backup substituirá todo o estoque e histórico atuais. Deseja continuar?")) {
+          const updatedDB = {
+            products: parsedData.products,
+            sales: parsedData.sales,
+            expenses: parsedData.expenses,
+            syncQueue: []
+          };
+          await saveDB(updatedDB);
+          setProducts(parsedData.products);
+          setSales(parsedData.sales);
+          setExpenses(parsedData.expenses);
+          alert("Backup restaurado com sucesso!");
+        }
+      } catch (err) {
+        alert("Erro ao ler arquivo de backup: " + err.message);
+      }
+    };
+    fileReader.readAsText(file);
+  };
+  
+  // Status do Scanner Global
+  const [scannerActive, setScannerActive] = useState(true);
+  const [lastScannedCode, setLastScannedCode] = useState('');
+  const [scannerNotification, setScannerNotification] = useState(null);
+
+  // Estados de Modais
+  const [productModalOpen, setProductModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [expenseModalOpen, setExpenseModalOpen] = useState(false);
+
+  // Buscar dados ao iniciar
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const db = await loadDB();
+      setProducts(db.products || []);
+      setSales(db.sales || []);
+      setExpenses(db.expenses || []);
+      setSyncPendingCount(db.syncQueue ? db.syncQueue.length : 0);
+    } catch (error) {
+      console.error("Erro ao carregar dados do banco:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const executeSync = async () => {
+    try {
+      const res = await runBackgroundSync();
+      const db = await loadDB();
+      const pendingJobs = db.syncQueue ? db.syncQueue.length : 0;
+      setSyncPendingCount(pendingJobs);
+
+      if (res.status === 'success' || res.status === 'syncing') {
+        setSyncStatus('Sincronizado');
+        setProducts(db.products || []);
+      } else if (res.status === 'error') {
+        setSyncStatus(res.message);
+      } else {
+        setSyncStatus(pendingJobs > 0 ? `${pendingJobs} pendentes` : 'Offline');
+      }
+    } catch (e) {
+      setSyncStatus('Offline');
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    if (!loading) {
+      executeSync();
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    // Sincronização em background a cada 15 segundos
+    const timer = setInterval(() => {
+      executeSync();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Notificação temporária de Scanner
+  const showScanNotification = (message, type = 'success') => {
+    setScannerNotification({ message, type });
+    setTimeout(() => setScannerNotification(null), 3000);
+  };
+
+  // --- ESCUTADOR GLOBAL DO LEITOR DE CÓDIGO DE BARRAS ---
+  useEffect(() => {
+    let buffer = '';
+    let lastKeyTime = Date.now();
+
+    const handleKeyDown = (e) => {
+      // Ignorar teclas se o leitor estiver desativado nas configurações
+      if (!scannerActive) return;
+      // Ignorar teclas modificadoras
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+      const now = Date.now();
+      const delay = now - lastKeyTime;
+      lastKeyTime = now;
+
+      // Se a digitação demorar muito entre caracteres (>50ms), descarta o buffer (presume digitação manual)
+      // a menos que o buffer esteja vazio (primeira tecla)
+      if (delay > 50 && buffer.length > 0) {
+        buffer = '';
+      }
+
+      // Adiciona números ao buffer
+      if (/^[0-9]$/.test(e.key)) {
+        buffer += e.key;
+      } 
+      // Ao terminar o sinal de bip, a maioria dos leitores envia "Enter"
+      else if (e.key === 'Enter') {
+        if (buffer.length >= 4) {
+          e.preventDefault();
+          handleBarcodeScanned(buffer);
+          buffer = '';
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [products, activeTab, scannerActive]);
+
+  // Processa o produto bipado
+  const handleBarcodeScanned = (barcode) => {
+    setLastScannedCode(barcode);
+    
+    // Procura o produto pelo código de barras
+    const foundProduct = products.find(p => p.code === barcode);
+    
+    if (foundProduct) {
+      if (foundProduct.stock <= 0) {
+        showScanNotification(`Produto '${foundProduct.name}' está sem estoque!`, 'error');
+        return;
+      }
+      
+      // Adiciona o produto ao carrinho do PDV
+      // Se não estiver na aba do PDV, opcionalmente avisa ou muda de aba
+      addToCartFromScan(foundProduct);
+      showScanNotification(`Bipado: ${foundProduct.name} (R$ ${foundProduct.salePrice.toFixed(2)})`, 'success');
+      
+      // Se estiver em outra aba, avisa o usuário
+      if (activeTab !== 'pdv') {
+        setActiveTab('pdv');
+      }
+    } else {
+      showScanNotification(`Código não cadastrado: ${barcode}`, 'error');
+    }
+  };
+
+  // --- ESTADO DO CARRINHO PDV ---
+  const [cart, setCart] = useState([]);
+  const [paymentMethod, setPaymentMethod] = useState('Pix');
+  const [amountPaid, setAmountPaid] = useState('');
+
+  const addToCartFromScan = (product) => {
+    setCart(prevCart => {
+      const existingItem = prevCart.find(item => item.id === product.id);
+      if (existingItem) {
+        // Verifica limite de estoque
+        if (existingItem.quantity >= product.stock) {
+          showScanNotification(`Estoque máximo atingido para ${product.name}`, 'error');
+          return prevCart;
+        }
+        return prevCart.map(item => 
+          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      } else {
+        return [...prevCart, { ...product, quantity: 1 }];
+      }
+    });
+  };
+
+  const updateCartQty = (productId, delta) => {
+    const product = products.find(p => p.id === productId);
+    setCart(prevCart => {
+      return prevCart.map(item => {
+        if (item.id === productId) {
+          const newQty = item.quantity + delta;
+          if (newQty <= 0) return null;
+          if (product && newQty > product.stock) {
+            showScanNotification(`Apenas ${product.stock} unidades disponíveis no estoque.`, 'error');
+            return item;
+          }
+          return { ...item, quantity: newQty };
+        }
+        return item;
+      }).filter(Boolean);
+    });
+  };
+
+  const removeFromCart = (productId) => {
+    setCart(prevCart => prevCart.filter(item => item.id !== productId));
+  };
+
+  const handleCheckout = async () => {
+    if (cart.length === 0) return;
+    
+    try {
+      const saleItems = [...cart];
+      const salePayment = paymentMethod;
+      const salePaid = parseFloat(amountPaid.replace(',', '.')) || 0;
+
+      const res = await registerSale(cart, paymentMethod);
+      setProducts(res.products);
+      setSales(res.sales);
+
+      const saleId = res.sales.length > 0 ? res.sales[res.sales.length - 1].id : '001';
+
+      setLastSaleReceipt({
+        id: saleId,
+        items: saleItems,
+        paymentMethod: salePayment,
+        amountPaid: salePaid,
+        timestamp: new Date().toISOString()
+      });
+
+      setCart([]);
+      setAmountPaid('');
+      showScanNotification("Venda finalizada com sucesso!", "success");
+    } catch (error) {
+      console.error("Erro ao finalizar venda:", error);
+      showScanNotification("Erro ao finalizar venda.", "error");
+    }
+  };
+
+  // --- CRUD PRODUTOS ---
+  const handleSaveProduct = async (productData) => {
+    try {
+      const updatedProducts = await saveProduct(productData);
+      setProducts(updatedProducts);
+      setProductModalOpen(false);
+      setEditingProduct(null);
+      showScanNotification("Produto salvo com sucesso!");
+    } catch (e) {
+      console.error(e);
+      showScanNotification("Erro ao salvar produto.", "error");
+    }
+  };
+
+  const handleDeleteProduct = async (productId) => {
+    if (window.confirm("Tem certeza que deseja excluir este produto?")) {
+      try {
+        const updatedProducts = await deleteProduct(productId);
+        setProducts(updatedProducts);
+        showScanNotification("Produto excluído!");
+      } catch (e) {
+        console.error(e);
+        showScanNotification("Erro ao excluir produto.", "error");
+      }
+    }
+  };
+
+  // --- GESTÃO DESPESAS ---
+  const handleSaveExpense = async (expenseData) => {
+    try {
+      const updatedExpenses = await saveExpense(expenseData);
+      setExpenses(updatedExpenses);
+      setExpenseModalOpen(false);
+      showScanNotification("Despesa registrada com sucesso!");
+    } catch (e) {
+      console.error(e);
+      showScanNotification("Erro ao registrar despesa.", "error");
+    }
+  };
+
+  const handleDeleteExpense = async (expenseId) => {
+    if (window.confirm("Excluir esta despesa?")) {
+      try {
+        const updatedExpenses = await deleteExpense(expenseId);
+        setExpenses(updatedExpenses);
+        showScanNotification("Despesa removida!");
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  // Simulador de Bip (para fins de testes sem leitor físico)
+  const triggerSimulatedScan = (code) => {
+    handleBarcodeScanned(code);
+  };
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
+        <div style={{ textAlign: 'center' }}>
+          <Barcode size={48} style={{ color: 'var(--primary)', animation: 'spin 2s linear infinite', marginBottom: '16px' }} />
+          <h2>Carregando Novo Lar...</h2>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isLoggedIn) {
+    return <LoginView onLogin={handleLogin} />;
+  }
+
+  // Estatísticas e KPI Computados (filtrados por loja logada)
+  const filteredSales = sales.filter(s => s.storeId === storeId);
+  const filteredExpenses = expenses.filter(e => e.storeId === storeId);
+
+  const totalSalesValue = filteredSales.reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalProfitValue = filteredSales.reduce((sum, s) => sum + s.profit, 0);
+  const totalExpensesValue = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const netCash = totalSalesValue - totalExpensesValue;
+  const lowStockCount = products.filter(p => p.stock <= p.minStock).length;
+
+  return (
+    <div className="app-container">
+      {/* Sidebar Lateral */}
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-icon" style={{ width: '40px', height: '40px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
+            <ShoppingBag size={20} />
+          </div>
+          <div className="brand-name">
+            <span style={{ fontSize: '18px', fontWeight: '800', color: 'var(--primary)', lineHeight: '1' }}>NOVO LAR</span>
+            <span style={{ fontSize: '9px', fontWeight: '800', color: 'var(--text-primary)', letterSpacing: '0.5px', marginTop: '2px' }}>CASA & CONSTRUÇÃO</span>
+            <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-muted)', marginTop: '4px', textTransform: 'uppercase' }}>
+              Sistema Comercial
+            </span>
+          </div>
+        </div>
+
+        <nav className="sidebar-menu">
+          <li>
+            <button 
+              className={`menu-item-btn ${activeTab === 'pdv' ? 'active' : ''}`}
+              onClick={() => setActiveTab('pdv')}
+            >
+              <ShoppingBag size={20} />
+              Frente de Caixa (PDV)
+            </button>
+          </li>
+          <li>
+            <button 
+              className={`menu-item-btn ${activeTab === 'daily-data' ? 'active' : ''}`}
+              onClick={() => setActiveTab('daily-data')}
+            >
+              <LayoutDashboard size={20} />
+              Dados Diários (Hoje)
+            </button>
+          </li>
+          <li>
+            <button 
+              className={`menu-item-btn ${activeTab === 'calendar' ? 'active' : ''}`}
+              onClick={() => setActiveTab('calendar')}
+            >
+              <Calendar size={20} />
+              Relatórios por Calendário
+            </button>
+          </li>
+          <li>
+            <button 
+              className={`menu-item-btn ${activeTab.startsWith('admin') ? 'active' : ''}`}
+              onClick={() => setIsAdminMenuOpen(!isAdminMenuOpen)}
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Layers size={20} />
+                <span>Administração</span>
+              </div>
+              <span style={{ fontSize: '10px', transform: isAdminMenuOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
+            </button>
+            
+            {isAdminMenuOpen && (
+              <ul className="sidebar-submenu" style={{ listStyle: 'none', paddingLeft: '16px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <li>
+                  <button 
+                    className={`submenu-item-btn ${activeTab === 'admin-products' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('admin-products')}
+                  >
+                    <Package size={16} />
+                    Cadastrar Produtos
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    className={`submenu-item-btn ${activeTab === 'admin-finance' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('admin-finance')}
+                  >
+                    <TrendingUp size={16} />
+                    Controle Geral
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    className={`submenu-item-btn ${activeTab === 'admin-insights' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('admin-insights')}
+                  >
+                    <Sparkles size={16} />
+                    Insights (IA)
+                  </button>
+                </li>
+              </ul>
+            )}
+          </li>
+        </nav>
+
+        <div className="sidebar-footer">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div className="status-badge" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div className="status-dot" style={{ backgroundColor: syncPendingCount > 0 ? 'var(--brand-yellow)' : (syncStatus === 'Offline' ? 'var(--text-muted)' : 'var(--success)') }}></div>
+                <span style={{ fontWeight: '600', fontSize: '12px' }}>
+                  {syncPendingCount > 0 ? `${syncPendingCount} envios pendentes` : 'Nuvem Conectada'}
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                Sincronismo: <strong>{syncStatus}</strong>
+              </div>
+            </div>
+            
+            {/* Terminal Logado e Botão de Logout */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '0 2px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)' }}>Terminal Logado:</div>
+              <div style={{ 
+                padding: '6px 10px', 
+                fontSize: '13px', 
+                fontWeight: '700',
+                backgroundColor: 'var(--bg-tertiary)', 
+                border: '1px solid var(--border-color)', 
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--primary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--primary)' }}></div>
+                {storeId === 'loja-1' ? 'Loja 1 - Matriz' : 'Loja 2 - Filial'}
+              </div>
+              <button 
+                onClick={handleLogout}
+                style={{ 
+                  padding: '8px 12px', 
+                  fontSize: '12px', 
+                  fontWeight: '600',
+                  color: 'var(--danger)',
+                  backgroundColor: 'var(--danger-glow)',
+                  border: '1px solid rgba(239, 68, 68, 0.15)',
+                  borderRadius: 'var(--radius-sm)',
+                  cursor: 'pointer',
+                  transition: 'var(--transition)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  marginTop: '4px'
+                }}
+              >
+                <X size={14} /> Sair do Terminal
+              </button>
+            </div>
+          </div>
+          <div style={{ fontSize: '10px', color: 'var(--text-muted)', textAlign: 'center', padding: '6px 0 0 0', borderTop: '1px solid var(--border-color)', marginTop: '4px' }}>
+            v1.1.0 • Multi-Loja Nuvem
+          </div>
+        </div>
+      </aside>
+
+      {/* Área Principal de Conteúdo */}
+      <main className="main-content">
+        {/* Top Header */}
+        <header className="top-header">
+          <div className="header-title-container">
+            <h1 className="header-title">
+              {activeTab === 'daily-data' && 'Dados Diários (Hoje)'}
+              {activeTab === 'calendar' && 'Calendário de Relatórios'}
+              {activeTab === 'pdv' && 'Frente de Caixa / Checkout'}
+              {activeTab === 'admin-insights' && 'Insights Comerciais (IA)'}
+              {activeTab === 'admin-products' && 'Administração: Produtos & Estoque'}
+              {activeTab === 'admin-finance' && 'Administração: Controle Geral & Rede'}
+            </h1>
+            <span className="header-subtitle">
+              {activeTab === 'daily-data' && 'Acompanhamento do faturamento, lucros e despesas de hoje'}
+              {activeTab === 'calendar' && 'Selecione qualquer data no calendário para extrair relatórios históricos'}
+              {activeTab === 'pdv' && 'Adicione produtos bipando ou digitando o código de barras'}
+              {activeTab === 'admin-insights' && 'Análise de vendas, priorização de compras por lucro e diagnóstico de mercado'}
+              {activeTab === 'admin-products' && 'Cadastre, edite e gerencie o estoque mínimo dos produtos'}
+              {activeTab === 'admin-finance' && 'Controle financeiro consolidado de faturamento, lucros, gráficos e rede ao vivo'}
+            </span>
+          </div>
+
+          <div className="header-actions">
+            {/* Status do Código de Barras */}
+            <div className={`scanner-status ${scannerActive ? 'active' : ''}`}>
+              <Barcode size={16} />
+              <span>{scannerActive ? 'Leitor Pronto' : 'Leitor Inativo'}</span>
+            </div>
+            
+            {(activeTab === 'admin-products' || activeTab === 'products') && (
+              <button className="btn-primary" style={{ padding: '10px 16px', fontSize: '14px' }} onClick={() => { setEditingProduct(null); setProductModalOpen(true); }}>
+                <Plus size={16} /> Cadastrar Produto
+              </button>
+            )}
+
+            {(activeTab === 'admin-finance' || activeTab === 'history') && (
+              <button className="btn-primary" style={{ padding: '10px 16px', fontSize: '14px' }} onClick={() => setExpenseModalOpen(true)}>
+                <Plus size={16} /> Registrar Despesa
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* Notificação Flutuante do Scanner */}
+        {scannerNotification && (
+          <div style={{
+            position: 'absolute',
+            top: '80px',
+            right: '24px',
+            zIndex: 1000,
+            backgroundColor: scannerNotification.type === 'success' ? 'rgba(16, 185, 129, 0.95)' : 'rgba(239, 68, 68, 0.95)',
+            color: '#fff',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            boxShadow: 'var(--shadow-md)',
+            fontWeight: '600',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            animation: 'modalFadeIn 0.2s ease-out'
+          }}>
+            {scannerNotification.type === 'success' ? <Check size={18} /> : <AlertTriangle size={18} />}
+            {scannerNotification.message}
+          </div>
+        )}
+
+        {/* Renderização Condicional de Telas */}
+        <div className="page-container">
+          {activeTab === 'daily-data' && (
+            <DailyDashboardView 
+              sales={filteredSales}
+              expenses={filteredExpenses}
+              products={products}
+              onSimulateScan={triggerSimulatedScan}
+              onChangeTab={setActiveTab}
+              getCashBalanceAtDate={getCashBalanceAtDate}
+            />
+          )}
+
+          {activeTab === 'pdv' && (
+            <PDVView 
+              products={products} 
+              cart={cart}
+              paymentMethod={paymentMethod}
+              setPaymentMethod={setPaymentMethod}
+              amountPaid={amountPaid}
+              setAmountPaid={setAmountPaid}
+              onUpdateCartQty={updateCartQty}
+              onRemoveFromCart={removeFromCart}
+              onCheckout={handleCheckout}
+              onSimulateScan={triggerSimulatedScan}
+              onQuickRegister={(virtualProduct) => {
+                setEditingProduct(virtualProduct);
+                setProductModalOpen(true);
+              }}
+              currentCashBalance={netCash}
+            />
+          )}
+
+          {activeTab === 'calendar' && (
+            <CalendarReportsView 
+              sales={filteredSales}
+              expenses={filteredExpenses}
+              getCashBalanceAtDate={getCashBalanceAtDate}
+            />
+          )}
+
+          {activeTab === 'admin-insights' && (
+            <AIAssistantView 
+              products={products}
+              sales={filteredSales}
+              expenses={filteredExpenses}
+            />
+          )}
+
+          {activeTab === 'admin-products' && (
+            <ProductsView 
+              products={products} 
+              onEditProduct={(p) => { setEditingProduct(p); setProductModalOpen(true); }}
+              onDeleteProduct={handleDeleteProduct}
+            />
+          )}
+
+          {activeTab === 'admin-finance' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <DashboardView 
+                products={products}
+                sales={filteredSales}
+                expenses={filteredExpenses}
+                totalSales={totalSalesValue}
+                totalProfit={totalProfitValue}
+                totalExpenses={totalExpensesValue}
+                netCash={netCash}
+                lowStockCount={lowStockCount}
+                onSimulateScan={triggerSimulatedScan}
+                onChangeTab={setActiveTab}
+                onExportBackup={handleExportBackup}
+                onImportBackup={handleImportBackup}
+              />
+              <HistoryExpensesView 
+                sales={filteredSales}
+                expenses={filteredExpenses}
+                onDeleteExpense={handleDeleteExpense}
+              />
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* MODAL DE CADASTRO/EDIÇÃO DE PRODUTO */}
+      {productModalOpen && (
+        <ProductModal 
+          product={editingProduct} 
+          onClose={() => { setProductModalOpen(false); setEditingProduct(null); }}
+          onSave={handleSaveProduct}
+        />
+      )}
+
+      {/* MODAL DE CADASTRO DE DESPESA */}
+      {expenseModalOpen && (
+        <ExpenseModal 
+          onClose={() => setExpenseModalOpen(false)}
+          onSave={handleSaveExpense}
+        />
+      )}
+
+      {/* MODAL DE RECIBO DE VENDA */}
+      {lastSaleReceipt && (
+        <ReceiptModal 
+          receipt={lastSaleReceipt}
+          onClose={() => setLastSaleReceipt(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ==========================================
+// 1. TELA: DASHBOARD VIEW
+// ==========================================
+function DashboardView({ 
+  products, 
+  sales, 
+  expenses, 
+  totalSales, 
+  totalProfit, 
+  totalExpenses, 
+  netCash, 
+  lowStockCount,
+  onSimulateScan,
+  onChangeTab,
+  onExportBackup,
+  onImportBackup
+}) {
+  const [viewMode, setViewMode] = useState('local'); // 'local' ou 'consolidated'
+  const [timeRange, setTimeRange] = useState('month'); // 'month', 'year', 'all'
+  const [cloudSales, setCloudSales] = useState([]);
+  const [cloudExpenses, setCloudExpenses] = useState([]);
+  const [loadingCloud, setLoadingCloud] = useState(false);
+
+  useEffect(() => {
+    if (viewMode === 'consolidated') {
+      const fetchCloudData = async () => {
+        setLoadingCloud(true);
+        try {
+          const { data: sData, error: sErr } = await supabase.from('sales').select('*');
+          const { data: eData, error: eErr } = await supabase.from('expenses').select('*');
+
+          if (!sErr && sData) {
+            setCloudSales(sData.map(s => ({
+              id: s.id,
+              timestamp: s.timestamp,
+              totalPrice: parseFloat(s.total_price),
+              totalCost: parseFloat(s.total_cost),
+              profit: parseFloat(s.profit),
+              paymentMethod: s.payment_method,
+              storeId: s.store_id,
+              items: s.items
+            })));
+          }
+          if (!eErr && eData) {
+            setCloudExpenses(eData.map(e => ({
+              id: e.id,
+              timestamp: e.timestamp,
+              description: e.description,
+              amount: parseFloat(e.amount),
+              category: e.category,
+              storeId: e.store_id
+            })));
+          }
+        } catch (err) {
+          console.error("Erro ao carregar dados consolidados", err);
+        } finally {
+          setLoadingCloud(false);
+        }
+      };
+      fetchCloudData();
+    }
+  }, [viewMode]);
+
+  const activeSales = viewMode === 'consolidated' ? cloudSales : sales;
+  const activeExpenses = viewMode === 'consolidated' ? cloudExpenses : expenses;
+
+  // Filtragem por período
+  const getFilteredDataByRange = (items) => {
+    const today = new Date();
+    return items.filter(item => {
+      const itemDate = new Date(item.timestamp);
+      if (timeRange === 'month') {
+        return itemDate.getMonth() === today.getMonth() && itemDate.getFullYear() === today.getFullYear();
+      } else if (timeRange === 'year') {
+        return itemDate.getFullYear() === today.getFullYear();
+      }
+      return true; // 'all'
+    });
+  };
+
+  const rangedSales = getFilteredDataByRange(activeSales);
+  const rangedExpenses = getFilteredDataByRange(activeExpenses);
+
+  const activeTotalSales = rangedSales.reduce((sum, s) => sum + s.totalPrice, 0);
+  const activeTotalProfit = rangedSales.reduce((sum, s) => sum + s.profit, 0);
+  const activeTotalExpenses = rangedExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const activeNetCash = activeTotalSales - activeTotalExpenses;
+
+  const lowStockItems = products.filter(p => p.stock <= p.minStock);
+
+  // Agrupar faturamento dinamicamente para o gráfico com base no período
+  const getDynamicChartData = () => {
+    if (timeRange === 'year') {
+      const monthNamesShort = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+      const currentYear = new Date().getFullYear();
+      const data = monthNamesShort.map((monthName, idx) => ({
+        label: monthName,
+        amount: 0,
+        monthIdx: idx
+      }));
+
+      rangedSales.forEach(sale => {
+        const d = new Date(sale.timestamp);
+        if (d.getFullYear() === currentYear) {
+          data[d.getMonth()].amount += sale.totalPrice;
+        }
+      });
+
+      const maxVal = Math.max(...data.map(d => d.amount), 100);
+      return data.map(d => ({
+        dayLabel: d.label,
+        amount: d.amount,
+        percentage: (d.amount / maxVal) * 100
+      }));
+    } else if (timeRange === 'month') {
+      const data = [
+        { label: 'Sem 1 (1-7)', amount: 0, range: [1, 7] },
+        { label: 'Sem 2 (8-14)', amount: 0, range: [8, 14] },
+        { label: 'Sem 3 (15-21)', amount: 0, range: [15, 21] },
+        { label: 'Sem 4 (22-28)', amount: 0, range: [22, 28] },
+        { label: 'Sem 5 (29+)', amount: 0, range: [29, 31] }
+      ];
+
+      const currentMonth = new Date().getMonth();
+      const currentYear = new Date().getFullYear();
+
+      rangedSales.forEach(sale => {
+        const d = new Date(sale.timestamp);
+        if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+          const dateDay = d.getDate();
+          const match = data.find(w => dateDay >= w.range[0] && dateDay <= w.range[1]);
+          if (match) {
+            match.amount += sale.totalPrice;
+          }
+        }
+      });
+
+      const maxVal = Math.max(...data.map(d => d.amount), 100);
+      return data.map(d => ({
+        dayLabel: d.label,
+        amount: d.amount,
+        percentage: (d.amount / maxVal) * 100
+      }));
+    } else {
+      const data = [];
+      const d = new Date();
+      const monthNamesShort = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+      for (let i = 5; i >= 0; i--) {
+        const tempDate = new Date();
+        tempDate.setMonth(d.getMonth() - i);
+        data.push({
+          label: `${monthNamesShort[tempDate.getMonth()]}`,
+          month: tempDate.getMonth(),
+          year: tempDate.getFullYear(),
+          amount: 0
+        });
+      }
+
+      activeSales.forEach(sale => {
+        const sDate = new Date(sale.timestamp);
+        const match = data.find(d => d.month === sDate.getMonth() && d.year === sDate.getFullYear());
+        if (match) {
+          match.amount += sale.totalPrice;
+        }
+      });
+
+      const maxVal = Math.max(...data.map(d => d.amount), 100);
+      return data.map(d => ({
+        dayLabel: d.label,
+        amount: d.amount,
+        percentage: (d.amount / maxVal) * 100
+      }));
+    }
+  };
+
+  const chartData = getDynamicChartData();
+
+  return (
+    <>
+      {/* Seletor de visualização (Faturamento Local vs Rede Consolidadado) */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '12px 18px',
+        backgroundColor: 'var(--bg-secondary)',
+        border: '1px solid var(--border-color)',
+        borderRadius: 'var(--radius-md)',
+        boxShadow: 'var(--shadow-sm)',
+        marginBottom: '4px',
+        flexWrap: 'wrap',
+        gap: '12px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)' }}>
+            Modo do Painel:
+          </span>
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+            {viewMode === 'local' ? 'Exibindo dados apenas desta loja física' : 'Exibindo faturamento consolidado de todas as lojas ao vivo'}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-sm)' }}>
+          <button 
+            onClick={() => setViewMode('local')}
+            style={{
+              padding: '6px 14px',
+              fontSize: '12px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              backgroundColor: viewMode === 'local' ? 'var(--bg-card)' : 'transparent',
+              color: viewMode === 'local' ? 'var(--primary)' : 'var(--text-secondary)',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'var(--transition)'
+            }}
+          >
+            Esta Loja (Local)
+          </button>
+          <button 
+            onClick={() => setViewMode('consolidated')}
+            style={{
+              padding: '6px 14px',
+              fontSize: '12px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              backgroundColor: viewMode === 'consolidated' ? 'var(--bg-card)' : 'transparent',
+              color: viewMode === 'consolidated' ? 'var(--primary)' : 'var(--text-secondary)',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'var(--transition)'
+            }}
+          >
+            Rede (Ao Vivo)
+          </button>
+        </div>
+      </div>
+
+      {/* Seletor de Período (Mês Atual, Ano Atual, Todo o Período) */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '12px 18px',
+        backgroundColor: 'var(--bg-secondary)',
+        border: '1px solid var(--border-color)',
+        borderRadius: 'var(--radius-md)',
+        boxShadow: 'var(--shadow-sm)',
+        marginBottom: '16px',
+        flexWrap: 'wrap',
+        gap: '12px',
+        marginTop: '12px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)' }}>
+            Período de Análise:
+          </span>
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+            Filtrar faturamento, lucros e despesas do controle geral
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-sm)' }}>
+          <button 
+            onClick={() => setTimeRange('month')}
+            style={{
+              padding: '6px 14px',
+              fontSize: '12px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              backgroundColor: timeRange === 'month' ? 'var(--bg-card)' : 'transparent',
+              color: timeRange === 'month' ? 'var(--primary)' : 'var(--text-secondary)',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'var(--transition)'
+            }}
+          >
+            Mês Atual
+          </button>
+          <button 
+            onClick={() => setTimeRange('year')}
+            style={{
+              padding: '6px 14px',
+              fontSize: '12px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              backgroundColor: timeRange === 'year' ? 'var(--bg-card)' : 'transparent',
+              color: timeRange === 'year' ? 'var(--primary)' : 'var(--text-secondary)',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'var(--transition)'
+            }}
+          >
+            Ano Atual
+          </button>
+          <button 
+            onClick={() => setTimeRange('all')}
+            style={{
+              padding: '6px 14px',
+              fontSize: '12px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              backgroundColor: timeRange === 'all' ? 'var(--bg-card)' : 'transparent',
+              color: timeRange === 'all' ? 'var(--primary)' : 'var(--text-secondary)',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'var(--transition)'
+            }}
+          >
+            Todo o Período
+          </button>
+        </div>
+      </div>
+
+      {loadingCloud && (
+        <div style={{
+          textAlign: 'center',
+          padding: '8px',
+          color: 'var(--primary)',
+          fontWeight: '600',
+          fontSize: '13px',
+          backgroundColor: 'var(--bg-card)',
+          borderRadius: 'var(--radius-sm)',
+          border: '1px solid var(--border-color)',
+          boxShadow: 'var(--shadow-sm)'
+        }}>
+          Buscando faturamento consolidado na nuvem Supabase...
+        </div>
+      )}
+
+      {/* Grid de KPIs */}
+      <div className="dashboard-summary-grid">
+        <div className="kpi-card sales">
+          <div className="kpi-icon-wrapper">
+            <TrendingUp size={24} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">Faturamento Período</span>
+            <span className="kpi-value">R$ {activeTotalSales.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          </div>
+        </div>
+
+        <div className="kpi-card profit">
+          <div className="kpi-icon-wrapper">
+            <DollarSign size={24} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">{viewMode === 'consolidated' ? 'Lucro Rede Período' : 'Lucro Período'}</span>
+            <span className="kpi-value" style={{ color: 'var(--success)' }}>
+              R$ {activeTotalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+
+        <div className="kpi-card expenses">
+          <div className="kpi-icon-wrapper">
+            <DollarSign size={24} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">Gastos & Despesas</span>
+            <span className="kpi-value" style={{ color: 'var(--danger)' }}>
+              R$ {activeTotalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+
+        <div className="kpi-card low-stock" style={{ borderColor: lowStockCount > 0 ? 'rgba(216, 45, 51, 0.3)' : 'var(--border-color)' }}>
+          <div className="kpi-icon-wrapper">
+            <AlertTriangle size={24} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">Estoque Baixo</span>
+            <span className="kpi-value" style={{ color: lowStockCount > 0 ? 'var(--brand-red)' : 'inherit' }}>
+              {lowStockCount} {lowStockCount === 1 ? 'Produto' : 'Produtos'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Simulador de Código de Barras */}
+      <div className="simulator-panel">
+        <div className="simulator-title">
+          <Sparkles size={16} />
+          <span>Painel de Simulação de Vendas (Simular bipagem)</span>
+        </div>
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+          Como não estamos usando o leitor físico neste momento, clique em um botão abaixo para simular o leitor de código de barras enviando o código EAN de um produto para a Frente de Caixa.
+        </p>
+        <div className="simulator-buttons">
+          {products.slice(0, 5).map(p => (
+            <button 
+              key={p.id} 
+              className="sim-btn"
+              onClick={() => onSimulateScan(p.code)}
+            >
+              Bipar: {p.name}
+            </button>
+          ))}
+          <button 
+            className="sim-btn" 
+            style={{ borderColor: 'var(--danger-glow)', color: 'var(--danger)' }}
+            onClick={() => onSimulateScan("9999999999999")}
+          >
+            Bipar Código Inexistente
+          </button>
+        </div>
+      </div>
+
+      {/* Gráfico & Alertas */}
+      <div className="dashboard-details-grid">
+        {/* Painel Esquerdo: Faturamento */}
+        <div className="section-card">
+          <div className="card-header">
+            <h2 className="card-title">
+              <TrendingUp size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
+              Evolução das Vendas (Faturamento)
+            </h2>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              {timeRange === 'month' && 'Semanas do Mês Atual'}
+              {timeRange === 'year' && 'Meses do Ano Atual'}
+              {timeRange === 'all' && 'Últimos 6 Meses'}
+            </span>
+          </div>
+          
+          <div className="chart-container">
+            {chartData.map((d, index) => (
+              <div key={index} className="chart-bar-wrapper">
+                <div 
+                  className="chart-bar-fill" 
+                  style={{ height: `${d.percentage}%` }}
+                >
+                  <div className="chart-tooltip">R$ {d.amount.toFixed(2)}</div>
+                </div>
+                <span className="chart-label" style={{ fontSize: '10px' }}>{d.dayLabel}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: 'var(--text-secondary)', marginTop: '8px' }}>
+            <span>Saldo Líquido Período: <strong style={{ color: activeNetCash >= 0 ? 'var(--success)' : 'var(--danger)' }}>R$ {activeNetCash.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></span>
+            <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => onChangeTab('admin-finance')}>Atualizar Vista</button>
+          </div>
+        </div>
+
+        {/* Painel Direito: Estoque Baixo */}
+        <div className="section-card">
+          <div className="card-header">
+            <h2 className="card-title" style={{ color: lowStockCount > 0 ? 'var(--brand-red)' : 'var(--text-primary)' }}>
+              <AlertTriangle size={20} />
+              Estoque Crítico / Reposição
+            </h2>
+            <span className="badge badge-danger">{lowStockCount}</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', maxHeight: '200px' }}>
+            {lowStockItems.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)' }}>
+                <Check size={28} style={{ color: 'var(--success)', marginBottom: '8px' }} />
+                <p style={{ fontSize: '13px' }}>Todos os produtos estão com estoque saudável!</p>
+              </div>
+            ) : (
+              lowStockItems.map(item => (
+                <div key={item.id} className="stock-alert-item">
+                  <div className="stock-alert-info">
+                    <span className="stock-alert-name">{item.name}</span>
+                    <span className="stock-alert-qty">Estoque: {item.stock} {item.unit} (Mín: {item.minStock})</span>
+                  </div>
+                  <span className="stock-alert-badge">Comprar</span>
+                </div>
+              ))
+            )}
+          </div>
+          {lowStockItems.length > 0 && (
+            <button className="btn-secondary" onClick={() => onChangeTab('admin-products')} style={{ width: '100%', fontSize: '13px' }}>
+              Ir para Inventário
+            </button>
+          )}
+      </div>
+    </div>
+      {/* Painel de Backups do Terminal */}
+      <div className="section-card" style={{ marginTop: '24px' }}>
+        <div className="card-header">
+          <h2 className="card-title">
+            <Database size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
+            Segurança & Backup do Terminal
+          </h2>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Mantenha seus dados seguros contra falhas de hardware</span>
+        </div>
+        <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '12px' }}>
+          <div style={{ flex: '1', minWidth: '240px' }}>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+              Baixe uma cópia completa de segurança contendo todo o seu inventário de produtos, histórico de vendas e lançamentos de despesas. Recomendamos salvar este backup semanalmente em um pendrive.
+            </p>
+            <button 
+              onClick={onExportBackup} 
+              className="btn-primary" 
+              style={{ marginTop: '12px', width: 'auto', padding: '10px 20px', display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              <Download size={16} /> Fazer Backup (Exportar JSON)
+            </button>
+          </div>
+          <div style={{ width: '1px', backgroundColor: 'var(--border-color)', alignSelf: 'stretch' }}></div>
+          <div style={{ flex: '1', minWidth: '240px' }}>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+              Para restaurar um backup anterior (por exemplo, após trocar de computador ou formatar o sistema), selecione o arquivo de backup (.json) exportado anteriormente.
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px' }}>
+              <input 
+                type="file" 
+                accept=".json" 
+                id="backup-upload" 
+                style={{ display: 'none' }} 
+                onChange={onImportBackup} 
+              />
+              <label 
+                htmlFor="backup-upload" 
+                className="btn-secondary" 
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px' }}
+              >
+                <Upload size={16} /> Escolher Arquivo de Backup
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ==========================================
+// 2. TELA: FRENTE DE CAIXA (PDV)
+// ==========================================
+function PDVView({
+  products,
+  cart,
+  paymentMethod,
+  setPaymentMethod,
+  amountPaid,
+  setAmountPaid,
+  onUpdateCartQty,
+  onRemoveFromCart,
+  onCheckout,
+  onSimulateScan,
+  onQuickRegister,
+  currentCashBalance = 0
+}) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const searchInputRef = useRef(null);
+  const amountPaidInputRef = useRef(null);
+
+  // Sistema de recomendação inteligente (Assistente IA local)
+  const getAISuggestion = () => {
+    if (cart.length === 0) return null;
+
+    const AI_RULES = [
+      {
+        keywords: ['cano', 'tubo', 'pvc', 'conexão', 'tê', 'curva', 'joelho', 'luva'],
+        suggestedKeyword: 'cola',
+        reason: 'Identificamos conexões de encanamento. É comum o cliente precisar de adesivo plástico (cola) para a fixação.',
+        title: 'Cola para PVC'
+      },
+      {
+        keywords: ['cimento', 'tijolo', 'bloco', 'areia', 'pedra'],
+        suggestedKeyword: 'argamassa',
+        reason: 'Materiais de alvenaria detectados. Sugira oferecer argamassa colante para garantir a aderência do assentamento.',
+        title: 'Argamassa'
+      },
+      {
+        keywords: ['fio', 'cabo', 'tomada', 'interruptor', 'disjuntor'],
+        suggestedKeyword: 'fita isolante',
+        reason: 'Componentes elétricos selecionados. Lembre o cliente de levar fita isolante para as emendas de segurança.',
+        title: 'Fita Isolante'
+      },
+      {
+        keywords: ['tinta', 'pintura', 'selador', 'esmalte', 'verniz'],
+        suggestedKeyword: 'rolo',
+        reason: 'O cliente está comprando tinta. Sugira rolos de pintura ou trinchas para a execução do serviço.',
+        title: 'Rolo de Pintura'
+      },
+      {
+        keywords: ['torneira', 'registro', 'chuveiro', 'engate', 'sifão'],
+        suggestedKeyword: 'veda rosca',
+        reason: 'Itens hidráulicos com rosca selecionados. Sugira fita veda rosca para evitar vazamentos nas conexões.',
+        title: 'Fita Veda Rosca'
+      }
+    ];
+
+    for (const item of cart) {
+      const nameLower = item.name.toLowerCase();
+      const matchRule = AI_RULES.find(rule => 
+        rule.keywords.some(keyword => nameLower.includes(keyword))
+      );
+
+      if (matchRule) {
+        // Procurar no estoque do catálogo o item sugerido que NÃO esteja no carrinho
+        const suggestionProduct = products.find(p => 
+          p.name.toLowerCase().includes(matchRule.suggestedKeyword) &&
+          !cart.some(cartItem => cartItem.id === p.id)
+        );
+
+        if (suggestionProduct) {
+          return {
+            triggerProduct: item.name,
+            suggestedProduct: suggestionProduct,
+            isVirtual: false,
+            reason: matchRule.reason,
+            title: matchRule.title
+          };
+        } else {
+          // Fallback virtual se o lojista não tem o produto cadastrado ainda no estoque
+          return {
+            triggerProduct: item.name,
+            suggestedProduct: {
+              id: null,
+              name: matchRule.suggestedKeyword === 'cola' 
+                ? 'Adesivo Plástico Cola para PVC 175g Tigre' 
+                : matchRule.suggestedKeyword === 'fita isolante' 
+                  ? 'Fita Isolante Imperial 3M 10m' 
+                  : matchRule.suggestedKeyword === 'argamassa' 
+                    ? 'Argamassa ACIII 20kg Quartzolit' 
+                    : matchRule.suggestedKeyword === 'rolo' 
+                      ? 'Rolo de Lã para Pintura Tigre 23cm' 
+                      : 'Fita Veda Rosca 18mm x 10m Tigre',
+              salePrice: matchRule.suggestedKeyword === 'cola' ? 12.90 : matchRule.suggestedKeyword === 'fita isolante' ? 4.80 : matchRule.suggestedKeyword === 'argamassa' ? 27.50 : matchRule.suggestedKeyword === 'rolo' ? 22.50 : 3.50,
+              costPrice: matchRule.suggestedKeyword === 'cola' ? 7.20 : matchRule.suggestedKeyword === 'fita isolante' ? 2.10 : matchRule.suggestedKeyword === 'argamassa' ? 18.20 : matchRule.suggestedKeyword === 'rolo' ? 12.00 : 1.50,
+              unit: matchRule.suggestedKeyword === 'cola' ? 'Bisnaga' : matchRule.suggestedKeyword === 'argamassa' ? 'Saco' : matchRule.suggestedKeyword === 'rolo' ? 'Unidade' : 'Rolo',
+              stock: 50,
+              minStock: 10,
+              code: matchRule.suggestedKeyword === 'cola' ? '7891000100109' : matchRule.suggestedKeyword === 'fita isolante' ? '7891000100110' : matchRule.suggestedKeyword === 'argamassa' ? '7891000100105' : matchRule.suggestedKeyword === 'rolo' ? '7891000100111' : '7891000100112',
+              category: matchRule.suggestedKeyword === 'cola' || matchRule.suggestedKeyword === 'veda rosca' ? 'Hidráulica' : matchRule.suggestedKeyword === 'argamassa' ? 'Materiais Básicos' : matchRule.suggestedKeyword === 'rolo' ? 'Tintas' : 'Elétrica'
+            },
+            isVirtual: true,
+            reason: matchRule.reason,
+            title: matchRule.title
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  const suggestion = getAISuggestion();
+
+  // Sistema de atalhos de teclado F2, F4, F8
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        if (searchInputRef.current) {
+          searchInputRef.current.focus();
+        }
+      } else if (e.key === 'F4') {
+        e.preventDefault();
+        if (paymentMethod === 'Dinheiro') {
+          if (amountPaidInputRef.current) {
+            amountPaidInputRef.current.focus();
+            amountPaidInputRef.current.select();
+          }
+        } else {
+          if (cart.length > 0) {
+            onCheckout();
+          }
+        }
+      } else if (e.key === 'F8') {
+        e.preventDefault();
+        if (cart.length > 0) {
+          if (confirm("Deseja realmente limpar todos os itens do carrinho?")) {
+            cart.forEach(item => onRemoveFromCart(item.id));
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [cart, paymentMethod, onCheckout, onRemoveFromCart]);
+
+  // Pesquisar produtos manualmente
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    const cleanTerm = searchTerm.toLowerCase();
+    const filtered = products.filter(p => 
+      p.name.toLowerCase().includes(cleanTerm) || 
+      p.code.includes(cleanTerm) ||
+      (p.category && p.category.toLowerCase().includes(cleanTerm))
+    );
+    setSearchResults(filtered.slice(0, 5)); // limita a 5 resultados rápidos
+  }, [searchTerm, products]);
+
+  const selectProductManual = (product) => {
+    if (product.stock <= 0) {
+      alert(`Produto '${product.name}' está sem estoque!`);
+      return;
+    }
+    const existing = cart.find(item => item.id === product.id);
+    if (existing && existing.quantity >= product.stock) {
+      alert("Estoque máximo atingido!");
+      return;
+    }
+    
+    // Adiciona ao carrinho
+    onUpdateCartQty(product.id, 1);
+    // Se não existia no carrinho e a qty era 0, adiciona manualmente
+    const isNew = !cart.find(c => c.id === product.id);
+    if (isNew) {
+      cart.push({ ...product, quantity: 1 });
+      onUpdateCartQty(product.id, 0); // Hack para renderizar atualizando
+    }
+
+    setSearchTerm('');
+    setSearchResults([]);
+    if (searchInputRef.current) {
+      searchInputRef.current.blur();
+    }
+  };
+
+  const totalCart = cart.reduce((sum, item) => sum + (item.salePrice * item.quantity), 0);
+  const totalCost = cart.reduce((sum, item) => sum + ((item.costPrice || 0) * item.quantity), 0);
+  const profit = totalCart - totalCost;
+
+  // Cálculo de troco
+  const numericPaid = parseFloat(amountPaid.replace(',', '.')) || 0;
+  const change = numericPaid > totalCart ? numericPaid - totalCart : 0;
+
+  return (
+    <div className="pdv-layout">
+      {/* LADO ESQUERDO: Carrinho e Pesquisa */}
+      <div className="pdv-left-panel">
+        
+        {/* Barra de Pesquisa manual / bipagem manual */}
+        <div className="barcode-search-container">
+          <div className="input-group">
+            <Search className="input-icon" size={20} />
+            <input 
+              ref={searchInputRef}
+              type="text" 
+              className="input-field" 
+              placeholder="Digite o código de barras ou nome do produto (Aperte F2 para focar)..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          
+          {/* Resultados de Pesquisa Rápida */}
+          {searchResults.length > 0 && (
+            <div style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-md)',
+              position: 'absolute',
+              width: 'calc(100% - 470px)',
+              top: '150px',
+              zIndex: 10,
+              boxShadow: 'var(--shadow-lg)'
+            }}>
+              {searchResults.map(p => (
+                <div 
+                  key={p.id}
+                  onClick={() => selectProductManual(p)}
+                  style={{
+                    padding: '12px 16px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    borderBottom: '1px solid var(--border-color)'
+                  }}
+                  className="search-item-hover"
+                >
+                  <div>
+                    <strong style={{ color: 'var(--primary)' }}>{p.name}</strong>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Cód: {p.code} | Estoque: {p.stock} {p.unit}</div>
+                  </div>
+                  <strong>R$ {p.salePrice.toFixed(2)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="barcode-focus-reminder">
+            <Barcode size={14} />
+            <span>Dica do Leitor:</span> Ao bipar com o leitor físico USB, o produto entra no carrinho na hora, não importa onde o cursor esteja na tela.
+          </div>
+        </div>
+
+        {/* Painel do Assistente de Vendas IA */}
+        {suggestion && (
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(18, 121, 138, 0.04) 0%, rgba(243, 180, 29, 0.04) 100%)',
+            border: '1.5px solid rgba(18, 121, 138, 0.2)',
+            borderRadius: 'var(--radius-md)',
+            padding: '16px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '16px',
+            animation: 'modalFadeIn 0.25s ease-out',
+            boxShadow: 'var(--shadow-sm)',
+            marginTop: '8px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--primary-glow)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--primary)',
+                flexShrink: 0,
+                boxShadow: '0 0 10px var(--primary-glow)'
+              }}>
+                <Sparkles size={20} />
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Assistente de Vendas Novo Lar (Sugestão IA)
+                  </span>
+                  <span style={{
+                    fontSize: '9px',
+                    backgroundColor: 'var(--brand-red)',
+                    color: '#fff',
+                    padding: '2px 6px',
+                    borderRadius: 'var(--radius-full)',
+                    fontWeight: '700'
+                  }}>
+                    IA
+                  </span>
+                </div>
+                <p style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', marginTop: '4px' }}>
+                  Oferecer {suggestion.suggestedProduct.name}?
+                </p>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  {suggestion.reason} (Preço: R$ {suggestion.suggestedProduct.salePrice.toFixed(2)} • Estoque: {suggestion.suggestedProduct.stock} {suggestion.suggestedProduct.unit})
+                </p>
+              </div>
+            </div>
+            
+            <button 
+              className="btn-primary" 
+              style={{ 
+                width: 'auto', 
+                padding: '10px 18px', 
+                fontSize: '13px', 
+                backgroundColor: suggestion.isVirtual ? 'var(--brand-yellow)' : 'var(--primary)',
+                color: suggestion.isVirtual ? '#000' : '#fff',
+                borderColor: 'transparent'
+              }}
+              onClick={() => {
+                if (suggestion.isVirtual) {
+                  onQuickRegister(suggestion.suggestedProduct);
+                } else {
+                  selectProductManual(suggestion.suggestedProduct);
+                }
+              }}
+            >
+              {suggestion.isVirtual ? 'Cadastrar Item' : '+ Adicionar'}
+            </button>
+          </div>
+        )}
+
+        {/* Carrinho de Compras */}
+        <div className="pdv-cart-card">
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 className="card-title">
+              <ShoppingBag size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
+              Carrinho de Venda
+            </h2>
+            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{cart.length} itens</span>
+          </div>
+
+          <div className="cart-table-wrapper">
+            {cart.length === 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <Barcode size={48} style={{ opacity: 0.3, marginBottom: '16px' }} />
+                <h3>Nenhum produto no carrinho</h3>
+                <p style={{ fontSize: '13px', marginTop: '6px', textAlign: 'center' }}>Bipe um código de barras para começar a registrar a venda ou use o painel de simulação.</p>
+              </div>
+            ) : (
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Preço Un.</th>
+                    <th style={{ width: '120px' }}>Quant.</th>
+                    <th>Total</th>
+                    <th style={{ width: '50px' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cart.map(item => (
+                    <tr key={item.id}>
+                      <td>
+                        <div>
+                          <strong>{item.name}</strong>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Cód: {item.code}</div>
+                        </div>
+                      </td>
+                      <td>R$ {item.salePrice.toFixed(2)}</td>
+                      <td>
+                        <div className="quantity-control">
+                          <button className="qty-btn" onClick={() => onUpdateCartQty(item.id, -1)}>-</button>
+                          <span style={{ minWidth: '24px', textAlign: 'center', fontWeight: '600' }}>{item.quantity}</span>
+                          <button className="qty-btn" onClick={() => onUpdateCartQty(item.id, 1)}>+</button>
+                        </div>
+                      </td>
+                      <td><strong>R$ {(item.salePrice * item.quantity).toFixed(2)}</strong></td>
+                      <td>
+                        <button className="delete-btn" onClick={() => onRemoveFromCart(item.id)}>
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Atalho do Simulador Rápido na Aba PDV */}
+          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+            <div className="simulator-title" style={{ fontSize: '12px', marginBottom: '8px' }}>
+              <Sparkles size={12} />
+              <span>Simular bipagem rápida nesta tela:</span>
+            </div>
+            <div className="simulator-buttons">
+              {products.slice(0, 3).map(p => (
+                <button 
+                  key={p.id} 
+                  className="sim-btn"
+                  style={{ padding: '4px 8px', fontSize: '11px' }}
+                  onClick={() => onSimulateScan(p.code)}
+                >
+                  Bipar {p.name.split(' ')[0]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Painel de Atalhos Rápidos */}
+          <div style={{
+            display: 'flex',
+            gap: '12px',
+            padding: '12px 16px',
+            borderTop: '1px solid var(--border-color)',
+            backgroundColor: 'var(--bg-secondary)',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            fontSize: '12px',
+            color: 'var(--text-secondary)'
+          }}>
+            <span style={{ fontWeight: '700' }}>Atalhos do Caixa:</span>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <kbd className="shortcut-badge">F2</kbd> Buscar
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <kbd className="shortcut-badge">F4</kbd> Pagamento
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <kbd className="shortcut-badge">F8</kbd> Limpar
+              </span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* LADO DIREITO: Painel de Checkout / Pagamento */}
+      <div className="pdv-right-panel">
+        {/* Total do Caixa Badge */}
+        <div style={{
+          backgroundColor: 'var(--primary-glow)',
+          border: '1px solid rgba(18, 121, 138, 0.2)',
+          borderRadius: 'var(--radius-md)',
+          padding: '12px 16px',
+          marginBottom: '16px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Coins size={18} style={{ color: 'var(--primary)' }} />
+            <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-secondary)' }}>Saldo Acumulado do Caixa:</span>
+          </div>
+          <strong style={{ fontSize: '16px', color: 'var(--primary)' }}>
+            R$ {currentCashBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </strong>
+        </div>
+
+        <div className="checkout-header">
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.5px' }}>Checkout</span>
+          <h2 style={{ fontSize: '20px', fontWeight: '700' }}>Resumo & Pagamento</h2>
+        </div>
+
+        <div className="checkout-summary">
+          <div className="checkout-row">
+            <span>Subtotal</span>
+            <span>R$ {totalCart.toFixed(2)}</span>
+          </div>
+          <div className="checkout-row">
+            <span>Desconto</span>
+            <span style={{ color: 'var(--success)' }}>R$ 0,00</span>
+          </div>
+
+          <div style={{ marginTop: '16px' }}>
+            <span className="input-label">Forma de Pagamento</span>
+            <div className="payment-grid">
+              <button 
+                className={`payment-btn ${paymentMethod === 'Pix' ? 'active' : ''}`}
+                onClick={() => setPaymentMethod('Pix')}
+              >
+                <Smartphone size={20} />
+                Pix
+              </button>
+              <button 
+                className={`payment-btn ${paymentMethod === 'Dinheiro' ? 'active' : ''}`}
+                onClick={() => setPaymentMethod('Dinheiro')}
+              >
+                <Coins size={20} />
+                Dinheiro
+              </button>
+              <button 
+                className={`payment-btn ${paymentMethod === 'Crédito' ? 'active' : ''}`}
+                onClick={() => setPaymentMethod('Crédito')}
+              >
+                <CreditCard size={20} />
+                Cartão Crédito
+              </button>
+              <button 
+                className={`payment-btn ${paymentMethod === 'Débito' ? 'active' : ''}`}
+                onClick={() => setPaymentMethod('Débito')}
+              >
+                <CreditCard size={20} />
+                Cartão Débito
+              </button>
+            </div>
+          </div>
+
+          {/* Troco no pagamento em dinheiro */}
+          {paymentMethod === 'Dinheiro' && (
+            <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px', animation: 'modalFadeIn 0.2s ease-out' }}>
+              <div className="form-group">
+                <label>Valor Pago pelo Cliente</label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <span style={{ position: 'absolute', left: '12px', color: 'var(--text-muted)' }}>R$</span>
+                  <input 
+                    ref={amountPaidInputRef}
+                    type="text" 
+                    placeholder="0,00"
+                    style={{ paddingLeft: '32px', width: '100%' }}
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {numericPaid > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--success-glow)', border: '1px solid var(--success)', marginTop: '4px' }}>
+                  <span style={{ fontWeight: '500' }}>Troco a devolver:</span>
+                  <strong style={{ color: 'var(--success)', fontSize: '16px' }}>R$ {change.toFixed(2)}</strong>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ flexGrow: 1 }}></div>
+
+          <div className="checkout-row total">
+            <span>TOTAL</span>
+            <span>R$ {totalCart.toFixed(2)}</span>
+          </div>
+          
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+            <span>Itens no carrinho: {cart.reduce((sum, i) => sum + i.quantity, 0)}</span>
+            <span>Lucro presumido nesta venda: R$ {profit.toFixed(2)}</span>
+          </div>
+        </div>
+
+        <div className="checkout-footer">
+          <button 
+            className="btn-primary" 
+            disabled={cart.length === 0}
+            onClick={onCheckout}
+          >
+            <Check size={20} />
+            Finalizar Venda (Confirmar)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 3. TELA: CADASTRO PRODUTOS / INVENTÁRIO
+// ==========================================
+function ProductsView({ products, onEditProduct, onDeleteProduct }) {
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredProducts = products.filter(p => 
+    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.code.includes(searchTerm) ||
+    (p.category && p.category.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  return (
+    <div className="section-card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+        <h2 className="card-title">
+          <Package size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
+          Lista de Produtos em Estoque
+        </h2>
+        
+        <div className="input-group" style={{ maxWidth: '350px', width: '100%' }}>
+          <Search className="input-icon" size={18} />
+          <input 
+            type="text" 
+            className="input-field" 
+            style={{ padding: '10px 14px 10px 42px' }}
+            placeholder="Pesquisar por nome, código ou categoria..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="table-container">
+        {filteredProducts.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+            <Package size={40} style={{ opacity: 0.3, marginBottom: '12px' }} />
+            <p>Nenhum produto cadastrado ou correspondente à busca.</p>
+          </div>
+        ) : (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Código (Barras)</th>
+                <th>Nome do Produto</th>
+                <th>Categoria</th>
+                <th>Custo</th>
+                <th>Venda</th>
+                <th>Estoque Atual</th>
+                <th style={{ width: '100px', textAlign: 'right' }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredProducts.map(p => {
+                const isLowStock = p.stock <= p.minStock;
+                return (
+                  <tr key={p.id}>
+                    <td style={{ fontFamily: 'monospace', fontWeight: '500' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Barcode size={14} style={{ color: 'var(--text-muted)' }} />
+                        {p.code}
+                      </span>
+                    </td>
+                    <td>
+                      <div>
+                        <strong>{p.name}</strong>
+                        {p.description && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{p.description}</div>}
+                      </div>
+                    </td>
+                    <td><span className="badge badge-info">{p.category || 'Geral'}</span></td>
+                    <td>R$ {p.costPrice.toFixed(2)}</td>
+                    <td><strong>R$ {p.salePrice.toFixed(2)}</strong></td>
+                    <td>
+                      <span style={{ 
+                        fontWeight: '700', 
+                        color: isLowStock ? 'var(--warning)' : 'var(--success)'
+                      }}>
+                        {p.stock} {p.unit || 'un'}
+                      </span>
+                      {isLowStock && (
+                        <div style={{ fontSize: '11px', color: 'var(--warning)', fontWeight: '500' }}>
+                          Mínimo: {p.minStock} {p.unit}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button 
+                          className="delete-btn" 
+                          style={{ color: 'var(--text-secondary)' }}
+                          onClick={() => onEditProduct(p)}
+                        >
+                          <Edit3 size={16} />
+                        </button>
+                        <button 
+                          className="delete-btn"
+                          onClick={() => onDeleteProduct(p.id)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+        Total de produtos no catálogo: {products.length}
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 4. TELA: HISTÓRICO DE VENDAS E DESPESAS
+// ==========================================
+function HistoryExpensesView({ sales, expenses, onDeleteExpense }) {
+  const [subTab, setSubTab] = useState('sales'); // 'sales' ou 'expenses'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      
+      {/* Sub-Navegação interna */}
+      <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+        <button 
+          className={`btn-secondary ${subTab === 'sales' ? 'active' : ''}`}
+          style={{ 
+            backgroundColor: subTab === 'sales' ? 'var(--primary-glow)' : 'var(--bg-card)',
+            borderColor: subTab === 'sales' ? 'var(--primary)' : 'var(--border-color)',
+            color: subTab === 'sales' ? 'var(--primary)' : 'var(--text-primary)',
+            padding: '8px 16px'
+          }}
+          onClick={() => setSubTab('sales')}
+        >
+          <History size={16} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+          Histórico de Vendas ({sales.length})
+        </button>
+        <button 
+          className={`btn-secondary ${subTab === 'expenses' ? 'active' : ''}`}
+          style={{ 
+            backgroundColor: subTab === 'expenses' ? 'var(--danger-glow)' : 'var(--bg-card)',
+            borderColor: subTab === 'expenses' ? 'var(--danger)' : 'var(--border-color)',
+            color: subTab === 'expenses' ? 'var(--danger)' : 'var(--text-primary)',
+            padding: '8px 16px'
+          }}
+          onClick={() => setSubTab('expenses')}
+        >
+          <DollarSign size={16} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+          Controle de Gastos / Despesas ({expenses.length})
+        </button>
+      </div>
+
+      {subTab === 'sales' ? (
+        <div className="section-card">
+          <div className="card-header">
+            <h2 className="card-title">Histórico de Saídas / Caixa</h2>
+            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Relatório de entradas registradas</span>
+          </div>
+
+          <div className="table-container">
+            {sales.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <History size={40} style={{ opacity: 0.3, marginBottom: '12px' }} />
+                <p>Nenhuma venda registrada ainda no sistema.</p>
+              </div>
+            ) : (
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Data & Hora</th>
+                    <th>ID Venda</th>
+                    <th>Itens</th>
+                    <th>Pagamento</th>
+                    <th>Custo Prod.</th>
+                    <th>Faturamento</th>
+                    <th>Lucro Líquido</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...sales].reverse().map(sale => (
+                    <tr key={sale.id}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
+                          {new Date(sale.timestamp).toLocaleString('pt-BR')}
+                        </div>
+                      </td>
+                      <td style={{ fontFamily: 'monospace', fontWeight: '600' }}>{sale.id}</td>
+                      <td>
+                        <div style={{ fontSize: '13px' }}>
+                          {sale.items.map((it, idx) => (
+                            <div key={idx}>• {it.name} (x{it.quantity})</div>
+                          ))}
+                        </div>
+                      </td>
+                      <td>
+                        <span className="badge badge-info">{sale.paymentMethod || 'Dinheiro'}</span>
+                      </td>
+                      <td>R$ {sale.totalCost?.toFixed(2) || '0.00'}</td>
+                      <td><strong>R$ {sale.totalPrice.toFixed(2)}</strong></td>
+                      <td><strong style={{ color: 'var(--success)' }}>R$ {sale.profit.toFixed(2)}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="section-card">
+          <div className="card-header">
+            <h2 className="card-title">Fluxo de Despesas Comerciais</h2>
+            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Contas, infraestrutura, logística e outros gastos</span>
+          </div>
+
+          <div className="table-container">
+            {expenses.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <DollarSign size={40} style={{ opacity: 0.3, marginBottom: '12px' }} />
+                <p>Nenhuma despesa ou saída registrada neste período.</p>
+              </div>
+            ) : (
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Categoria</th>
+                    <th>Descrição / Fornecedor</th>
+                    <th>Valor</th>
+                    <th style={{ width: '80px', textAlign: 'right' }}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...expenses].reverse().map(exp => (
+                    <tr key={exp.id}>
+                      <td>{new Date(exp.timestamp).toLocaleDateString('pt-BR')}</td>
+                      <td><span className="badge badge-danger" style={{ textTransform: 'uppercase' }}>{exp.category}</span></td>
+                      <td><strong>{exp.description}</strong></td>
+                      <td><strong style={{ color: 'var(--danger)' }}>R$ {exp.amount.toFixed(2)}</strong></td>
+                      <td>
+                        <div style={{ textAlign: 'right' }}>
+                          <button 
+                            className="delete-btn"
+                            onClick={() => onDeleteExpense(exp.id)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==========================================
+// MODAL: CRIAR OU EDITAR PRODUTO
+// ==========================================
+function ProductModal({ product, onClose, onSave }) {
+  const [code, setCode] = useState(product ? product.code : '');
+  const [name, setName] = useState(product ? product.name : '');
+  const [description, setDescription] = useState(product ? product.description : '');
+  const [costPrice, setCostPrice] = useState(product ? product.costPrice.toString() : '');
+  const [salePrice, setSalePrice] = useState(product ? product.salePrice.toString() : '');
+  const [stock, setStock] = useState(product ? product.stock.toString() : '');
+  const [minStock, setMinStock] = useState(product ? product.minStock.toString() : '');
+  const [category, setCategory] = useState(product ? product.category : 'Materiais Básicos');
+  const [unit, setUnit] = useState(product ? product.unit : 'Unidade');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!code || !name || !costPrice || !salePrice || !stock || !minStock) {
+      alert("Por favor, preencha todos os campos obrigatórios.");
+      return;
+    }
+
+    onSave({
+      id: product ? product.id : null,
+      code: code.trim(),
+      name: name.trim(),
+      description: description.trim(),
+      costPrice: parseFloat(costPrice.replace(',', '.')),
+      salePrice: parseFloat(salePrice.replace(',', '.')),
+      stock: parseInt(stock),
+      minStock: parseInt(minStock),
+      category,
+      unit
+    });
+  };
+
+  // Gerar código de barras fictício se não tiver
+  const generateEan = () => {
+    const random = Math.floor(100000000000 + Math.random() * 900000000000);
+    setCode("789" + random.toString());
+  };
+
+  return (
+    <div className="modal-overlay">
+      <form className="modal-content" onSubmit={handleSubmit}>
+        <div className="modal-header">
+          <h2 style={{ fontSize: '18px', fontWeight: '700' }}>
+            {product ? 'Editar Produto' : 'Cadastrar Novo Produto'}
+          </h2>
+          <button type="button" className="delete-btn" onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="modal-body">
+          <div className="form-row">
+            <div className="form-group" style={{ position: 'relative' }}>
+              <label>Código de Barras (EAN) *</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input 
+                  type="text" 
+                  value={code} 
+                  onChange={(e) => setCode(e.target.value)} 
+                  placeholder="Bipe com o leitor ou digite..." 
+                  required
+                />
+                <button type="button" className="btn-secondary" style={{ padding: '0 12px' }} onClick={generateEan}>
+                  Gerar
+                </button>
+              </div>
+            </div>
+            
+            <div className="form-group">
+              <label>Nome do Produto *</label>
+              <input 
+                type="text" 
+                value={name} 
+                onChange={(e) => setName(e.target.value)} 
+                placeholder="Ex: Cimento CP II 50kg" 
+                required
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Descrição Opcional</label>
+            <input 
+              type="text" 
+              value={description} 
+              onChange={(e) => setDescription(e.target.value)} 
+              placeholder="Ex: Fabricante: Votoran, Secagem rápida" 
+            />
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Categoria</label>
+              <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                <option value="Materiais Básicos">Materiais Básicos</option>
+                <option value="Hidráulica">Hidráulica</option>
+                <option value="Elétrica">Elétrica</option>
+                <option value="Acabamento">Acabamento</option>
+                <option value="Ferragens">Ferragens</option>
+                <option value="Tintas">Tintas</option>
+                <option value="Ferramentas">Ferramentas</option>
+              </select>
+            </div>
+            
+            <div className="form-group">
+              <label>Unidade de Medida</label>
+              <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+                <option value="Unidade">Unidade (Un)</option>
+                <option value="Saco">Saco</option>
+                <option value="Metro">Metro (m)</option>
+                <option value="Barra">Barra</option>
+                <option value="Caixa">Caixa</option>
+                <option value="Rolo">Rolo</option>
+                <option value="Milheiro">Milheiro</option>
+                <option value="Lata">Lata</option>
+                <option value="Kg">Kg</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Preço de Custo (Compra) *</label>
+              <input 
+                type="text" 
+                value={costPrice} 
+                onChange={(e) => setCostPrice(e.target.value)} 
+                placeholder="0,00" 
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label>Preço de Venda (Cliente) *</label>
+              <input 
+                type="text" 
+                value={salePrice} 
+                onChange={(e) => setSalePrice(e.target.value)} 
+                placeholder="0,00" 
+                required
+              />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Estoque Atual *</label>
+              <input 
+                type="number" 
+                value={stock} 
+                onChange={(e) => setStock(e.target.value)} 
+                placeholder="Ex: 50" 
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label>Estoque Mínimo (Alerta) *</label>
+              <input 
+                type="number" 
+                value={minStock} 
+                onChange={(e) => setMinStock(e.target.value)} 
+                placeholder="Ex: 10" 
+                required
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="btn-primary" style={{ width: 'auto', padding: '10px 24px' }}>Salvar Produto</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ==========================================
+// MODAL: REGISTRAR DESPESA
+// ==========================================
+function ExpenseModal({ onClose, onSave }) {
+  const [description, setDescription] = useState('');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState('Contas Fixas');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!description || !amount) {
+      alert("Preencha todos os campos obrigatórios.");
+      return;
+    }
+
+    onSave({
+      description: description.trim(),
+      amount: parseFloat(amount.replace(',', '.')),
+      category
+    });
+  };
+
+  return (
+    <div className="modal-overlay">
+      <form className="modal-content" onSubmit={handleSubmit}>
+        <div className="modal-header">
+          <h2 style={{ fontSize: '18px', fontWeight: '700' }}>Registrar Gasto / Despesa</h2>
+          <button type="button" className="delete-btn" onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="modal-body">
+          <div className="form-group">
+            <label>Descrição da Despesa *</label>
+            <input 
+              type="text" 
+              value={description} 
+              onChange={(e) => setDescription(e.target.value)} 
+              placeholder="Ex: Conta de Luz Enel Julho" 
+              required
+            />
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Valor da Despesa *</label>
+              <input 
+                type="text" 
+                value={amount} 
+                onChange={(e) => setAmount(e.target.value)} 
+                placeholder="0,00" 
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label>Categoria de Gasto</label>
+              <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                <option value="Contas Fixas">Contas Fixas (Água, Luz, Net)</option>
+                <option value="Infraestrutura">Infraestrutura & Obras</option>
+                <option value="Fornecedores">Pagamento Fornecedores</option>
+                <option value="Logística">Logística & Frete</option>
+                <option value="Funcionários">Salário & Comissões</option>
+                <option value="Outros">Outros Gastos</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="btn-primary" style={{ width: 'auto', padding: '10px 24px' }}>Registrar Despesa</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ==========================================
+// 6. TELA: LOGIN VIEW
+// ==========================================
+function LoginView({ onLogin }) {
+  const [selectedStore, setSelectedStore] = useState('loja-1');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (password === '123') {
+      onLogin(selectedStore, 'admin');
+    } else {
+      setError('Senha de acesso incorreta! Tente "123".');
+    }
+  };
+
+  return (
+    <div className="login-overlay">
+      <div className="login-card">
+        <div className="login-logo-container">
+          <svg width="48" height="48" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 13 L16 3 L29 13 L25 13 L16 5.5 L7 13 Z" fill="#d82d33" />
+            <rect x="8" y="14" width="7" height="7" rx="1.5" fill="#f3b41d" />
+            <rect x="17" y="14" width="7" height="7" rx="1.5" fill="#f3b41d" />
+            <rect x="8" y="22" width="7" height="7" rx="1.5" fill="#f3b41d" />
+            <rect x="17" y="22" width="7" height="7" rx="1.5" fill="#f3b41d" />
+          </svg>
+          <div className="login-brand-name">
+            <span className="brand-main">NOVO LAR</span>
+            <span className="brand-sub">CASA & CONSTRUÇÃO</span>
+          </div>
+        </div>
+        
+        <h2 className="login-title">Acesso ao Sistema</h2>
+        <p className="login-subtitle">Escolha o seu terminal e insira a senha</p>
+
+        <form onSubmit={handleSubmit} className="login-form">
+          <div className="form-group" style={{ marginBottom: '16px' }}>
+            <label className="input-label" style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Selecione a Loja:</label>
+            <select
+              value={selectedStore}
+              onChange={(e) => setSelectedStore(e.target.value)}
+              className="login-select"
+            >
+              <option value="loja-1">Loja 1 - Matriz</option>
+              <option value="loja-2">Loja 2 - Filial</option>
+            </select>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: '20px' }}>
+            <label className="input-label" style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Senha de Acesso:</label>
+            <input
+              type="password"
+              placeholder="Digite a senha de acesso (123)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="input-field login-input"
+              required
+            />
+          </div>
+
+          {error && <div className="login-error">{error}</div>}
+
+          <button type="submit" className="btn-primary login-btn">
+            Entrar no Terminal
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 7. TELA: DADOS DIÁRIOS (HOJE)
+// ==========================================
+function DailyDashboardView({ sales, expenses, products, onSimulateScan, onChangeTab, getCashBalanceAtDate }) {
+  const todayStr = new Date().toISOString().split('T')[0];
+  
+  const todaySales = sales.filter(s => s.timestamp.split('T')[0] === todayStr);
+  const todayExpenses = expenses.filter(e => e.timestamp.split('T')[0] === todayStr);
+
+  const totalSales = todaySales.reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalProfit = todaySales.reduce((sum, s) => sum + s.profit, 0);
+  const totalExpenses = todayExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const netCash = totalSales - totalExpenses;
+
+  // Calculando saldos de abertura e fechamento
+  const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(todayStr) : 0;
+  const closingCash = openingCash + totalSales - totalExpenses;
+
+  const lowStockItems = products.filter(p => p.stock <= p.minStock);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      {/* Grid de KPIs do Dia */}
+      <div className="dashboard-summary-grid">
+        <div className="kpi-card sales">
+          <div className="kpi-icon-wrapper" style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-glow)' }}>
+            <ShoppingBag size={24} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">Vendas de Hoje</span>
+            <span className="kpi-value">R$ {totalSales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+          </div>
+        </div>
+
+        <div className="kpi-card profit">
+          <div className="kpi-icon-wrapper">
+            <DollarSign size={24} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">Lucro de Hoje</span>
+            <span className="kpi-value" style={{ color: 'var(--success)' }}>
+              R$ {totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+
+        <div className="kpi-card expenses">
+          <div className="kpi-icon-wrapper">
+            <DollarSign size={24} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">Gastos de Hoje</span>
+            <span className="kpi-value" style={{ color: 'var(--danger)' }}>
+              R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+
+        <div className="kpi-card low-stock" style={{ borderColor: lowStockItems.length > 0 ? 'rgba(216, 45, 51, 0.3)' : 'var(--border-color)' }}>
+          <div className="kpi-icon-wrapper">
+            <AlertTriangle size={24} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">Alerta Estoque</span>
+            <span className="kpi-value" style={{ color: lowStockItems.length > 0 ? 'var(--brand-red)' : 'inherit' }}>
+              {lowStockItems.length} {lowStockItems.length === 1 ? 'Produto' : 'Produtos'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Fluxo de Caixa Diário */}
+      <div style={{
+        padding: '14px 20px',
+        borderRadius: 'var(--radius-md)',
+        border: '1px solid var(--border-color)',
+        backgroundColor: 'var(--bg-secondary)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '16px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Coins size={18} style={{ color: 'var(--primary)' }} />
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Fundo de Abertura</div>
+            <strong style={{ fontSize: '15px', color: 'var(--text-primary)' }}>
+              R$ {openingCash.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </strong>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <TrendingUp size={18} style={{ color: 'var(--success)' }} />
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Movimentação do Dia</div>
+            <strong style={{ fontSize: '15px', color: netCash >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+              {netCash >= 0 ? '+' : ''} R$ {netCash.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </strong>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ShoppingBag size={18} style={{ color: 'var(--primary)' }} />
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Saldo de Fechamento</div>
+            <strong style={{ fontSize: '16px', color: 'var(--primary)' }}>
+              R$ {closingCash.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </strong>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: '20px' }}>
+        {/* Coluna da Esquerda: Tabelas do Dia */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="section-card">
+            <div className="card-header">
+              <h3 className="card-title">Vendas do Dia (Hoje)</h3>
+            </div>
+            <div className="table-container" style={{ maxHeight: '250px', overflowY: 'auto' }}>
+              {todaySales.length === 0 ? (
+                <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px 0', fontSize: '14px' }}>
+                  Nenhuma venda realizada hoje. Abra o PDV para começar!
+                </p>
+              ) : (
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Itens</th>
+                      <th>Pagamento</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {todaySales.map(sale => (
+                      <tr key={sale.id}>
+                        <td style={{ fontWeight: '700' }}>{sale.id}</td>
+                        <td>{sale.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}</td>
+                        <td>{sale.paymentMethod}</td>
+                        <td style={{ fontWeight: '700', color: 'var(--primary)' }}>R$ {sale.totalPrice.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          <div className="section-card">
+            <div className="card-header">
+              <h3 className="card-title">Despesas do Dia (Hoje)</h3>
+            </div>
+            <div className="table-container" style={{ maxHeight: '250px', overflowY: 'auto' }}>
+              {todayExpenses.length === 0 ? (
+                <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px 0', fontSize: '14px' }}>
+                  Nenhuma despesa lançada hoje.
+                </p>
+              ) : (
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Categoria</th>
+                      <th>Descrição</th>
+                      <th>Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {todayExpenses.map(exp => (
+                      <tr key={exp.id}>
+                        <td style={{ fontWeight: '700' }}>{exp.id}</td>
+                        <td>{exp.category}</td>
+                        <td>{exp.description}</td>
+                        <td style={{ fontWeight: '700', color: 'var(--danger)' }}>R$ {exp.amount.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Coluna da Direita: Alertas de Estoque & Simulação */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="section-card">
+            <div className="card-header">
+              <h3 className="card-title">Produtos com Estoque Crítico</h3>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '220px', overflowY: 'auto' }}>
+              {lowStockItems.length === 0 ? (
+                <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '13px' }}>Todo o estoque está regularizado!</p>
+              ) : (
+                lowStockItems.map(p => (
+                  <div key={p.id} className="stock-alert-item">
+                    <div className="stock-alert-info">
+                      <span className="stock-alert-name">{p.name}</span>
+                      <span className="stock-alert-qty">Estoque: {p.stock} {p.unit}</span>
+                    </div>
+                    <span className="stock-alert-badge">Mín: {p.minStock}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Painel de Simulação */}
+          <div className="section-card" style={{ backgroundColor: 'var(--primary-glow)', borderColor: 'rgba(18, 121, 138, 0.15)' }}>
+            <div className="card-header">
+              <h3 className="card-title" style={{ color: 'var(--primary)' }}>Simulador de Vendas</h3>
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+              Bipe virtualmente produtos selecionando o catálogo de simulação para testar o PDV de forma rápida.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+              {products.slice(0, 3).map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => onSimulateScan(p.code)}
+                  className="qty-btn"
+                  style={{
+                    width: '100%',
+                    justifyContent: 'flex-start',
+                    padding: '8px 12px',
+                    fontSize: '12px',
+                    height: 'auto',
+                    textAlign: 'left',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}
+                >
+                  <Barcode size={14} style={{ marginRight: '6px' }} />
+                  Bipar: {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 8. TELA: RELATÓRIOS POR CALENDÁRIO
+// ==========================================
+function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
+  const [selectedDate, setSelectedDate] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+
+  const [currentMonth, setCurrentMonth] = useState(() => new Date());
+
+  const daySales = sales.filter(s => s.timestamp.split('T')[0] === selectedDate);
+  const dayExpenses = expenses.filter(e => e.timestamp.split('T')[0] === selectedDate);
+
+  const totalSales = daySales.reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalProfit = daySales.reduce((sum, s) => sum + s.profit, 0);
+  const totalExpenses = dayExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const netCash = totalSales - totalExpenses;
+
+  // Calculando saldos de abertura e fechamento
+  const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(selectedDate) : 0;
+  const closingCash = openingCash + totalSales - totalExpenses;
+
+  const getDaysInMonth = (date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const totalDays = new Date(year, month + 1, 0).getDate();
+    return { firstDay, totalDays };
+  };
+
+  const { firstDay, totalDays } = getDaysInMonth(currentMonth);
+
+  const prevMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+  };
+
+  const nextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
+
+  const daysArray = Array(firstDay).fill(null).concat(
+    Array(totalDays).fill(0).map((_, i) => i + 1)
+  );
+
+  const monthNames = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+  ];
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: '24px' }}>
+      {/* Lado Esquerdo: Calendário */}
+      <div className="section-card" style={{ height: 'fit-content' }}>
+        <div className="card-header" style={{ marginBottom: '12px' }}>
+          <h3 className="card-title">Selecione uma Data</h3>
+        </div>
+        
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <button onClick={prevMonth} className="qty-btn" style={{ width: '32px', height: '32px' }}>&lt;</button>
+          <span style={{ fontWeight: '700', fontSize: '15px', color: 'var(--text-primary)' }}>
+            {monthNames[currentMonth.getMonth()]} de {currentMonth.getFullYear()}
+          </span>
+          <button onClick={nextMonth} className="qty-btn" style={{ width: '32px', height: '32px' }}>&gt;</button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', fontWeight: '700', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+          <span>Dom</span><span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
+          {daysArray.map((day, idx) => {
+            if (day === null) return <div key={`empty-${idx}`}></div>;
+            
+            const year = currentMonth.getFullYear();
+            const month = String(currentMonth.getMonth() + 1).padStart(2, '0');
+            const dateDay = String(day).padStart(2, '0');
+            const formattedDate = `${year}-${month}-${dateDay}`;
+
+            const isSelected = selectedDate === formattedDate;
+            const isToday = new Date().toISOString().split('T')[0] === formattedDate;
+
+            const hasSales = sales.some(s => s.timestamp.split('T')[0] === formattedDate);
+            const hasExpenses = expenses.some(e => e.timestamp.split('T')[0] === formattedDate);
+
+            return (
+              <button
+                key={day}
+                onClick={() => setSelectedDate(formattedDate)}
+                style={{
+                  height: '38px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: isSelected ? 'var(--primary)' : (isToday ? 'var(--primary-glow)' : 'var(--bg-tertiary)'),
+                  color: isSelected ? '#ffffff' : 'var(--text-primary)',
+                  border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontWeight: (isSelected || isToday) ? '700' : '500',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  position: 'relative',
+                  transition: 'var(--transition)'
+                }}
+              >
+                {day}
+                {(hasSales || hasExpenses) && (
+                  <div style={{
+                    display: 'flex',
+                    gap: '2px',
+                    position: 'absolute',
+                    bottom: '3px'
+                  }}>
+                    {hasSales && <div style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: isSelected ? '#ffffff' : 'var(--success)' }}></div>}
+                    {hasExpenses && <div style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: isSelected ? '#ffffff' : 'var(--danger)' }}></div>}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+          <label className="input-label" style={{ fontSize: '12px' }}>Ou escolha no calendário do sistema:</label>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => {
+              if (e.target.value) {
+                setSelectedDate(e.target.value);
+                setCurrentMonth(new Date(e.target.value));
+              }
+            }}
+            className="input-field"
+            style={{ padding: '8px 12px', height: '38px', fontSize: '13px' }}
+          />
+        </div>
+      </div>
+
+      {/* Lado Direito: Relatório do Dia */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div className="section-card">
+          <div className="card-header">
+            <h3 className="card-title">
+              Relatório Diário — {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+            </h3>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+            <div style={{ padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--primary-glow)', display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--primary)', textTransform: 'uppercase' }}>Faturamento</span>
+              <strong style={{ fontSize: '20px', color: 'var(--text-primary)', marginTop: '4px' }}>
+                R$ {totalSales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </strong>
+            </div>
+
+            <div style={{ padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--success-glow)', display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--success)', textTransform: 'uppercase' }}>Lucro Presumido</span>
+              <strong style={{ fontSize: '20px', color: 'var(--success)', marginTop: '4px' }}>
+                R$ {totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </strong>
+            </div>
+
+            <div style={{ padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--danger-glow)', display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--danger)', textTransform: 'uppercase' }}>Despesas</span>
+              <strong style={{ fontSize: '20px', color: 'var(--danger)', marginTop: '4px' }}>
+                R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </strong>
+            </div>
+          </div>
+
+          <div style={{ padding: '12px 16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: netCash >= 0 ? 'rgba(16, 185, 129, 0.05)' : 'rgba(239, 68, 68, 0.05)' }}>
+            <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-secondary)' }}>Saldo Líquido de Caixa:</span>
+            <strong style={{ fontSize: '16px', color: netCash >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+              R$ {netCash.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </strong>
+          </div>
+
+          {/* Caixa de Abertura e Fechamento no Relatório Diário */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '12px',
+            marginTop: '16px',
+            borderTop: '1px solid var(--border-color)',
+            paddingTop: '16px'
+          }}>
+            <div style={{ padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+              <div style={{ fontSize: '10px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Abertura de Caixa</div>
+              <strong style={{ fontSize: '14px', color: 'var(--text-primary)', marginTop: '2px', display: 'block' }}>
+                R$ {openingCash.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </strong>
+            </div>
+            <div style={{ padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', backgroundColor: 'var(--primary-glow)' }}>
+              <div style={{ fontSize: '10px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Fechamento de Caixa</div>
+              <strong style={{ fontSize: '14px', color: 'var(--primary)', marginTop: '2px', display: 'block' }}>
+                R$ {closingCash.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="section-card">
+          <div className="card-header">
+            <h3 className="card-title">Vendas Registradas ({daySales.length})</h3>
+          </div>
+          <div className="table-container" style={{ maxHeight: '180px', overflowY: 'auto' }}>
+            {daySales.length === 0 ? (
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '14px' }}>Nenhuma venda registrada nesta data.</p>
+            ) : (
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Itens</th>
+                    <th>Pagamento</th>
+                    <th>Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {daySales.map(sale => (
+                    <tr key={sale.id}>
+                      <td style={{ fontWeight: '700' }}>{sale.id}</td>
+                      <td>{sale.items.map(item => `${item.quantity}x ${item.name}`).join(', ')}</td>
+                      <td>{sale.paymentMethod}</td>
+                      <td style={{ fontWeight: '700', color: 'var(--primary)' }}>R$ {sale.totalPrice.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        <div className="section-card">
+          <div className="card-header">
+            <h3 className="card-title">Despesas Registradas ({dayExpenses.length})</h3>
+          </div>
+          <div className="table-container" style={{ maxHeight: '180px', overflowY: 'auto' }}>
+            {dayExpenses.length === 0 ? (
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '14px' }}>Nenhuma despesa registrada nesta data.</p>
+            ) : (
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Categoria</th>
+                    <th>Descrição</th>
+                    <th>Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayExpenses.map(exp => (
+                    <tr key={exp.id}>
+                      <td style={{ fontWeight: '700' }}>{exp.id}</td>
+                      <td>{exp.category}</td>
+                      <td>{exp.description}</td>
+                      <td style={{ fontWeight: '700', color: 'var(--danger)' }}>R$ {exp.amount.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 10. COMPONENTE: RECIBO TÉRMICO DE VENDA
+// ==========================================
+function ReceiptModal({ receipt, onClose }) {
+  if (!receipt) return null;
+
+  const total = receipt.items.reduce((sum, item) => sum + item.salePrice * item.quantity, 0);
+  const change = receipt.paymentMethod === 'Dinheiro' && receipt.amountPaid > total 
+    ? receipt.amountPaid - total 
+    : 0;
+
+  const handlePrint = () => {
+    const printContent = document.getElementById('thermal-receipt-print-area').innerHTML;
+    
+    // Abrir uma janela de impressão limpa
+    const printWindow = window.open('', '_blank', 'width=350,height=600');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Cupom de Venda - Novo Lar</title>
+          <style>
+            body {
+              font-family: 'Courier New', Courier, monospace;
+              font-size: 12px;
+              color: #000;
+              margin: 10px;
+              padding: 0;
+              width: 300px;
+            }
+            .center { text-align: center; }
+            .right { text-align: right; }
+            .bold { font-weight: bold; }
+            .divider { border-top: 1px dashed #000; margin: 8px 0; }
+            .item-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+            .totals-row { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 2px; }
+          </style>
+        </head>
+        <body>
+          ${printContent}
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '380px', padding: '20px' }}>
+        <div className="modal-header">
+          <h2 style={{ fontSize: '18px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <CheckCircle size={20} style={{ color: 'var(--success)' }} />
+            Venda Concluída!
+          </h2>
+        </div>
+
+        <div className="modal-body" style={{ maxHeight: '420px', overflowY: 'auto', padding: '10px 0' }}>
+          {/* Bobina Térmica Simulada */}
+          <div 
+            id="thermal-receipt-print-area"
+            style={{
+              backgroundColor: '#fffcf5',
+              border: '1px solid #e0dcd3',
+              borderRadius: 'var(--radius-sm)',
+              padding: '16px',
+              fontFamily: '"Courier New", Courier, monospace',
+              color: '#333',
+              boxShadow: 'inset 0 0 10px rgba(0,0,0,0.02)',
+              fontSize: '13px'
+            }}
+          >
+            <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>NOVO LAR CASA & CONSTRUÇÃO</div>
+            <div style={{ textAlign: 'center', fontSize: '11px', color: '#666', marginTop: '2px' }}>LOJA MATRIZ - CNPJ: 12.345.678/0001-90</div>
+            <div style={{ textAlign: 'center', fontSize: '11px', color: '#666' }}>Rua das Ferramentas, 100 - Centro</div>
+            
+            <div style={{ borderTop: '1px dashed #ccc', margin: '10px 0' }}></div>
+            
+            <div><strong>CUPOM NÃO FISCAL - VENDA #{receipt.id}</strong></div>
+            <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
+              Data: {new Date(receipt.timestamp).toLocaleString('pt-BR')}
+            </div>
+            
+            <div style={{ borderTop: '1px dashed #ccc', margin: '10px 0' }}></div>
+            
+            {/* Itens */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {receipt.items.map((item, idx) => (
+                <div key={idx} style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ fontWeight: 'bold' }}>{item.name}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#555' }}>
+                    <span>{item.quantity} {item.unit} x R$ {item.salePrice.toFixed(2)}</span>
+                    <strong>R$ {(item.salePrice * item.quantity).toFixed(2)}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div style={{ borderTop: '1px dashed #ccc', margin: '10px 0' }}></div>
+            
+            {/* Totais */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px' }}>
+                <span>TOTAL</span>
+                <span>R$ {total.toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                <span>Forma Pagto:</span>
+                <span>{receipt.paymentMethod}</span>
+              </div>
+              {receipt.paymentMethod === 'Dinheiro' && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                    <span>Valor Pago:</span>
+                    <span>R$ {receipt.amountPaid.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 'bold', color: 'var(--success)' }}>
+                    <span>Troco:</span>
+                    <span>R$ {change.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
+            </div>
+            
+            <div style={{ borderTop: '1px dashed #ccc', margin: '10px 0' }}></div>
+            
+            <div style={{ textAlign: 'center', fontSize: '11px', fontStyle: 'italic', color: '#666' }}>
+              Obrigado pela preferência!<br />Volte sempre!
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-footer" style={{ display: 'flex', gap: '8px', width: '100%' }}>
+          <button 
+            type="button" 
+            className="btn-secondary" 
+            style={{ flex: 1 }} 
+            onClick={onClose}
+          >
+            Fechar
+          </button>
+          <button 
+            type="button" 
+            className="btn-primary" 
+            style={{ flex: 1.5, gap: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={handlePrint}
+          >
+            <Printer size={16} /> Imprimir Cupom
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 10. TELA: ASSISTENTE DE IA E INTELIGÊNCIA COMERCIAL
+// ==========================================
+function AIAssistantView({ products, sales, expenses }) {
+  // Estado da chave da API e controle da gaveta de configuração
+  const [apiKey, setApiKey] = useState(() => {
+    return localStorage.getItem('novo_lar_gemini_api_key') || '';
+  });
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [keyInput, setKeyInput] = useState(apiKey);
+  const [saveStatus, setSaveStatus] = useState('');
+
+  const [messages, setMessages] = useState([
+    { 
+      sender: 'ai', 
+      text: 'Olá! Sou o **Novo Lar Copilot**, a inteligência comercial dedicada para o seu depósito de materiais de construção.\n\nAnalisei seu estoque, custos e histórico de vendas. O que você gostaria de saber?\n\n* **Quais produtos trazem mais lucro para a loja?**\n* **O que preciso comprar para repor o estoque hoje?**\n* **Quais itens estão parados (encalhados)?**\n* **Ideias para aumentar as vendas com ofertas combinadas.**\n\n*💡 Para ativar a inteligência real capaz de responder qualquer pergunta livre, insira sua chave da API do Gemini clicando no ícone de engrenagem no topo do chat.*',
+      timestamp: new Date()
+    }
+  ]);
+  const [inputValue, setInputValue] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isTyping]);
+
+  // Salvar a chave da API no localStorage
+  const handleSaveApiKey = (e) => {
+    e.preventDefault();
+    localStorage.setItem('novo_lar_gemini_api_key', keyInput);
+    setApiKey(keyInput);
+    setSaveStatus('Chave salva com sucesso!');
+    setTimeout(() => {
+      setSaveStatus('');
+      setIsDrawerOpen(false);
+    }, 1500);
+  };
+
+  // Verifica se o estoque está vazio
+  const isEstoqueVazio = products.length === 0;
+
+  // Lógica de análise de categorias para uma loja de materiais de construção
+  const categoriesList = ['Materiais Básicos', 'Hidráulica', 'Elétrica', 'Tintas', 'Acabamento', 'Ferragens'];
+  
+  const categoryStats = categoriesList.map(cat => {
+    const catProducts = products.filter(p => p.category === cat);
+    const total = catProducts.length;
+    if (total === 0) return { category: cat, total: 0, critical: 0, health: 0, class: 'warning', label: 'Sem Cadastro' };
+    
+    const critical = catProducts.filter(p => p.stock <= p.minStock).length;
+    const goodCount = total - critical;
+    const health = Math.round((goodCount / total) * 100);
+    
+    let statusClass = 'good';
+    let statusLabel = 'Saudável';
+    if (health < 40) {
+      statusClass = 'critical';
+      statusLabel = 'Crítico';
+    } else if (health < 75) {
+      statusClass = 'warning';
+      statusLabel = 'Atenção';
+    }
+    
+    return {
+      category: cat,
+      total,
+      critical,
+      health,
+      class: statusClass,
+      label: statusLabel
+    };
+  });
+
+  // Lógica de processamento de dados para análise de vendas
+  const productSalesMap = {};
+  sales.forEach(sale => {
+    if (sale.items) {
+      sale.items.forEach(item => {
+        const id = item.productId || item.id;
+        if (id) {
+          productSalesMap[id] = (productSalesMap[id] || 0) + (item.quantity || 0);
+        }
+      });
+    }
+  });
+
+  const productListWithSales = products.map(p => {
+    const qtySold = productSalesMap[p.id] || 0;
+    const unitProfit = p.salePrice - p.costPrice;
+    const totalProfit = qtySold * unitProfit;
+    return {
+      ...p,
+      qtySold,
+      unitProfit,
+      totalProfit
+    };
+  });
+
+  const maisVendidos = [...productListWithSales]
+    .filter(p => p.qtySold > 0)
+    .sort((a, b) => b.qtySold - a.qtySold)
+    .slice(0, 5);
+
+  const menosVendidos = [...productListWithSales]
+    .sort((a, b) => a.qtySold - b.qtySold)
+    .slice(0, 5);
+
+  const emAlertaEstoque = productListWithSales.filter(p => p.stock <= p.minStock);
+  
+  const recomendacoesReposicao = emAlertaEstoque.map(p => {
+    const priorityScore = p.unitProfit * (p.qtySold + 1);
+    let priorityLabel = 'Baixa';
+    let priorityClass = 'low';
+    
+    if (priorityScore >= 30 || (p.qtySold > 10 && p.unitProfit > 5)) {
+      priorityLabel = 'Alta';
+      priorityClass = 'high';
+    } else if (priorityScore >= 10 || p.qtySold > 2) {
+      priorityLabel = 'Média';
+      priorityClass = 'medium';
+    }
+    
+    return {
+      ...p,
+      priorityScore,
+      priorityLabel,
+      priorityClass
+    };
+  }).sort((a, b) => b.priorityScore - a.priorityScore);
+
+  // Diagnóstico Comercial Inteligente (IA) - Métricas Reais
+  const totalRevenue = sales.reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalCost = sales.reduce((sum, s) => sum + s.totalCost, 0);
+  const totalProfit = totalRevenue - totalCost;
+  const averageMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+
+  const salesCount = sales.length;
+  const ticketMedio = salesCount > 0 ? totalRevenue / salesCount : 0;
+
+  const totalStockCost = products.reduce((sum, p) => sum + (p.stock * p.costPrice), 0);
+
+  const deadStockProducts = productListWithSales.filter(p => p.qtySold === 0 && p.stock > 0);
+  const deadStockCost = deadStockProducts.reduce((sum, p) => sum + (p.stock * p.costPrice), 0);
+
+  const replacementCost = emAlertaEstoque.reduce((sum, p) => {
+    const qtyNeeded = p.minStock - p.stock;
+    return sum + (qtyNeeded > 0 ? qtyNeeded * p.costPrice : 0);
+  }, 0);
+
+  const potentialRevenue = products.reduce((sum, p) => sum + (p.stock * p.salePrice), 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const netProfit = totalProfit - totalExpenses;
+
+  // Enviar pergunta para a API do Gemini ou Fallback Local
+  const handleAskAI = async (question) => {
+    if (!question.trim()) return;
+
+    const userMsg = { sender: 'user', text: question, timestamp: new Date() };
+    setMessages(prev => [...prev, userMsg]);
+    setInputValue('');
+    setIsTyping(true);
+
+    if (apiKey.trim()) {
+      // PROMPT DO SISTEMA COM DADOS EM TEMPO REAL EM JSON
+      const systemPrompt = `Você é o "Novo Lar Copilot", um assistente inteligente e analista de negócios especialista em depósitos de materiais de construção.
+Você está integrado ao sistema comercial do depósito "Novo Lar - Casa & Construção" e tem acesso ao banco de dados atualizado da loja em tempo real.
+
+Sua tarefa:
+1. Responder à dúvida do dono da loja em português de forma clara, prestativa e estruturada.
+2. Usar dados reais do JSON fornecido para fazer contas de lucros, faturamento, despesas e estoque.
+3. Se a pergunta for sobre reposição, ajude a decidir o que comprar com base no lucro (Preço Venda - Preço Custo) e se o produto tem saída. Explique que itens de obra bruta (como Cimento) são essenciais, mas itens de acabamento/elétrica dão margem maior.
+4. Dar ideias de mercado criativas para vender produtos de material de construção (como combos, descontos no Pix, cross-selling como cimento + argamassa, rolos + tintas).
+5. Responda usando Markdown rico (negrito, listas e tabelas pequenas quando relevante). Seja conciso e direto ao ponto.
+
+Abaixo estão os dados reais do banco de dados da loja em formato JSON:
+${JSON.stringify({
+  produtos: products.map(p => ({
+    id: p.id,
+    codigo: p.code,
+    nome: p.name,
+    categoria: p.category,
+    estoque: p.stock,
+    estoque_minimo: p.minStock,
+    preco_custo: p.costPrice,
+    preco_venda: p.salePrice,
+    unidade: p.unit
+  })),
+  vendas: sales.map(s => ({
+    id: s.id,
+    data: s.timestamp,
+    loja: s.storeId,
+    total: s.totalPrice,
+    custo: s.totalCost,
+    lucro: s.profit,
+    pagamento: s.paymentMethod,
+    itens: s.items.map(i => ({ nome: i.name, quantidade: i.quantity, preco: i.salePrice }))
+  })),
+  despesas: expenses.map(e => ({
+    id: e.id,
+    data: e.timestamp,
+    descricao: e.description,
+    valor: e.amount,
+    categoria: e.category
+  }))
+}, null, 2)}`;
+
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: `${systemPrompt}\n\nPergunta do Lojista:\n"${question}"` }
+                ]
+              }
+            ]
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Falha na resposta da API');
+        }
+
+        const data = await response.json();
+        const replyText = data.candidates[0].content.parts[0].text;
+        setMessages(prev => [...prev, { sender: 'ai', text: replyText, timestamp: new Date() }]);
+      } catch (err) {
+        console.error("Erro na chamada do Gemini API, usando fallback offline:", err);
+        setMessages(prev => [...prev, { 
+          sender: 'ai', 
+          text: `⚠️ **Erro na conexão com a IA Real (Gemini)**. Houve um problema ao conectar com a sua chave de API. Verifique a internet e a chave. \n\n*Ativando resposta de backup local:*\n\n${getLocalFallbackResponse(question)}`, 
+          timestamp: new Date() 
+        }]);
+      } finally {
+        setIsTyping(false);
+      }
+    } else {
+      // FALLBACK LOCAL OFFLINE SE NÃO HOUVER API KEY
+      setTimeout(() => {
+        const localResponse = getLocalFallbackResponse(question);
+        setMessages(prev => [...prev, { sender: 'ai', text: localResponse, timestamp: new Date() }]);
+        setIsTyping(false);
+      }, 1000);
+    }
+  };
+
+  // Algoritmo local offline para gerar respostas pré-programadas baseadas no DB real
+  const getLocalFallbackResponse = (question) => {
+    const normalizedQuestion = question.toLowerCase();
+    
+    if (isEstoqueVazio) {
+      return 'Atualmente você não possui produtos cadastrados no estoque. Por favor, adicione os produtos na aba de **Administração** primeiro para que eu possa analisar custos e sugerir lucros!';
+    }
+    
+    if (normalizedQuestion.includes('lucro') || normalizedQuestion.includes('lucrativo') || normalizedQuestion.includes('margem')) {
+      const sortedByProfit = [...productListWithSales]
+        .sort((a, b) => b.unitProfit - a.unitProfit)
+        .slice(0, 3);
+      
+      let text = 'Aqui estão os **3 produtos mais lucrativos** (maior lucro unitário) cadastrados na sua loja:\n\n';
+      sortedByProfit.forEach((p, idx) => {
+        const margin = p.salePrice > 0 ? ((p.unitProfit / p.salePrice) * 100).toFixed(0) : 0;
+        text += `${idx + 1}. **${p.name}**\n   * Lucro por unidade: **R$ ${p.unitProfit.toFixed(2)}** (Margem: **${margin}%**)\n   * Preço de Venda: R$ ${p.salePrice.toFixed(2)} / Custo: R$ ${p.costPrice.toFixed(2)}\n   * Giro de Vendas: ${p.qtySold} unidades vendidas.\n\n`;
+      });
+      text += '💡 **Dica de Construção:** Produtos de acabamento (torneiras) ou elétrica costumam ter margem maior que materiais básicos. Impulsione a venda deles no balcão!';
+      return text;
+    } 
+    else if (normalizedQuestion.includes('comprar') || normalizedQuestion.includes('repor') || normalizedQuestion.includes('estoque') || normalizedQuestion.includes('pedido')) {
+      if (emAlertaEstoque.length === 0) {
+        return 'Parabéns! Todos os produtos da sua loja estão com estoque acima do nível mínimo. **Não há necessidade de reposição urgente** no momento.';
+      }
+      
+      let text = `Identifiquei **${emAlertaEstoque.length} produtos** abaixo do estoque mínimo. Segue a ordem de compras priorizada por margem de lucro e giro:\n\n`;
+      const maxPriority = recomendacoesReposicao.filter(r => r.priorityLabel === 'Alta');
+      const medPriority = recomendacoesReposicao.filter(r => r.priorityLabel === 'Média');
+      const lowPriority = recomendacoesReposicao.filter(r => r.priorityLabel === 'Baixa');
+
+      if (maxPriority.length > 0) {
+        text += '🔥 **Prioridade Máxima (Repor Urgente)**\n';
+        maxPriority.forEach(p => {
+          text += `* **${p.name}** (Estoque: ${p.stock}/${p.minStock}) — Lucro de R$ ${p.unitProfit.toFixed(2)} por unidade. Vendeu ${p.qtySold} un.\n`;
+        });
+        text += '\n';
+      }
+      if (medPriority.length > 0) {
+        text += '⚡ **Prioridade Média (Planejar Compra)**\n';
+        medPriority.forEach(p => {
+          text += `* **${p.name}** (Estoque: ${p.stock}/${p.minStock}) — Lucro de R$ ${p.unitProfit.toFixed(2)}/un.\n`;
+        });
+        text += '\n';
+      }
+      if (lowPriority.length > 0) {
+        text += '💤 **Prioridade Baixa (Adiar)**\n';
+        lowPriority.forEach(p => {
+          text += `* **${p.name}** — Margem baixa ou encalhado no histórico.\n`;
+        });
+      }
+      return text;
+    } 
+    else if (normalizedQuestion.includes('encalhado') || normalizedQuestion.includes('parado') || normalizedQuestion.includes('sem venda') || normalizedQuestion.includes('menos vendem')) {
+      const parados = productListWithSales
+        .filter(p => p.qtySold === 0 && p.stock > 0)
+        .sort((a, b) => b.stock - a.stock)
+        .slice(0, 3);
+
+      if (parados.length === 0) {
+        return 'Excelente! Todos os produtos cadastrados registraram movimentação de vendas recente.';
+      }
+      
+      let text = 'Identifiquei os seguintes **produtos parados** (sem vendas e com estoque acumulado):\n\n';
+      parados.forEach(p => {
+        text += `* **${p.name}**\n  * Estoque atual: **${p.stock}** unidades paradas.\n  * Valor de custo parado: **R$ ${(p.stock * p.costPrice).toFixed(2)}**\n\n`;
+      });
+      text += '📣 **Recomendação da IA:** Crie ofertas do tipo "Combos de Construção". Ex: Na compra de uma lata de Tinta Acrílica, dê 15% de desconto no Rolo de Pintura parado.';
+      return text;
+    } 
+    else if (normalizedQuestion.includes('dica') || normalizedQuestion.includes('ideia') || normalizedQuestion.includes('mercado') || normalizedQuestion.includes('aumentar') || normalizedQuestion.includes('vender')) {
+      return 'Aqui estão **3 ideias de mercado** focadas para depósitos de materiais de construção:\n\n' +
+        '1. **O Combo do Pintor**\n   * Junte **Tinta Coral Branca 18L** com **Rolo de Lã Tigre** e **Fita Isolante** como um pacote promocional de pintura básica. Isso aumenta a saída de acessórios.\n\n' +
+        '2. **Incentivo de Caixa para PIX**\n   * Crie um cartaz no balcão: *"3% de desconto em materiais básicos para pagamentos no Pix"*. Como cimento e tijolo têm margem apertada, economizar nas taxas de cartão melhora seu fluxo de caixa.\n\n' +
+        '3. **Venda Casada Opcional**\n   * Quem compra **Cimento CP II** geralmente precisa de **Argamassa ACIII** e colheres de pedreiro. Incentive o operador de caixa a perguntar sobre esses materiais complementares a cada venda faturada.';
+    }
+    
+    const totalRev = sales.reduce((sum, s) => sum + s.totalPrice, 0);
+    const totalProf = totalRev - sales.reduce((sum, s) => sum + s.totalCost, 0);
+
+    return `Olá! Sou o analista de IA da loja. Veja um resumo rápido da operação:\n\n` +
+      `* **Produtos Cadastrados**: ${products.length} itens\n` +
+      `* **Estoque Crítico**: ${emAlertaEstoque.length} itens\n` +
+      `* **Total Faturamento**: R$ ${totalRev.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n` +
+      `* **Lucro Presumido**: R$ ${totalProf.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\n` +
+      `Insira uma chave API do Gemini nas configurações do chat para poder fazer qualquer pergunta livre, ou use os botões rápidos abaixo!`;
+  };
+
+  // Auxiliar para formatar tags de negrito e listas em HTML real na bolha de chat
+  const formatMessageText = (text) => {
+    return text.split('\n').map((line, idx) => {
+      let content = line;
+      let isBullet = false;
+      if (line.trim().startsWith('* ')) {
+        content = line.trim().slice(2);
+        isBullet = true;
+      }
+      
+      const parts = content.split('**');
+      const parsedLine = parts.map((part, pIdx) => {
+        if (pIdx % 2 === 1) {
+          return <strong key={pIdx}>{part}</strong>;
+        }
+        return part;
+      });
+
+      if (isBullet) {
+        return (
+          <li key={idx} style={{ marginLeft: '20px', marginBottom: '4px', listStyleType: 'disc' }}>
+            {parsedLine}
+          </li>
+        );
+      }
+      
+      return <div key={idx} style={{ marginBottom: line ? '6px' : '12px' }}>{parsedLine}</div>;
+    });
+  };
+
+  return (
+    <div className="ai-assistant-layout" style={{ animation: 'fadeIn 0.3s ease-out' }}>
+      
+      {/* Coluna da Esquerda: Relatórios e Estatísticas */}
+      <div className="ai-assistant-left-col">
+        
+        {isEstoqueVazio ? (
+          /* Estado Onboarding se não houver produtos cadastrados */
+          <div className="ai-onboarding-card">
+            <div className="ai-onboarding-icon">
+              <Package size={32} />
+            </div>
+            <h3 className="ai-onboarding-title">Bem-vindo ao Novo Lar Copilot!</h3>
+            <p className="ai-onboarding-desc">
+              Esta é a central de Inteligência Comercial da sua loja. No momento, o seu estoque está sem nenhum material cadastrado.
+            </p>
+            <p className="ai-onboarding-desc" style={{ fontSize: '12.5px', marginTop: '-8px', opacity: 0.85 }}>
+              Para começarmos a analisar margens de lucro, classificar prioridades de reposição por canteiro de obras e gerar insights financeiros em tempo real, acesse a aba <strong>Administração &gt; Cadastrar Produtos</strong> e adicione seus materiais (como cimento, fios, tintas e tubos).
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* PAINEL UNIFICADO 1: Saúde do Estoque e Reposição Comercial */}
+            <div className="category-stock-card">
+              <div className="ai-glow-header" style={{ marginBottom: '20px' }}>
+                <div className="ai-glow-icon">
+                  <Layers size={20} />
+                </div>
+                <div>
+                  <h3 className="ai-glow-title">Setores da Obra & Saúde do Estoque</h3>
+                  <p className="ai-glow-subtitle">Acompanhamento e alertas por departamento do depósito</p>
+                </div>
+              </div>
+
+              <div className="category-stock-grid">
+                {categoryStats.map((stat, idx) => (
+                  <div className="category-stock-item" key={idx}>
+                    <div className="category-stock-header">
+                      <span>{stat.category}</span>
+                      <span className={`category-stock-badge ${stat.class}`}>
+                        {stat.total === 0 ? 'Sem Cadastro' : stat.critical > 0 ? `${stat.critical} em Alerta` : 'Estável'} 
+                        {stat.total > 0 && ` (${stat.health}%)`}
+                      </span>
+                    </div>
+                    <div className="category-progress-container">
+                      <div 
+                        className={`category-progress-bar ${stat.class}`} 
+                        style={{ width: stat.total > 0 ? `${stat.health}%` : '0%' }}
+                      ></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '22px 0' }} />
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <Package size={16} style={{ color: 'var(--primary)' }} />
+                <h4 style={{ fontSize: '13px', fontWeight: '800', margin: 0 }}>Plano de Compras Sugerido</h4>
+              </div>
+
+              {recomendacoesReposicao.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
+                  <CheckCircle size={20} style={{ color: 'var(--success)', marginBottom: '6px', display: 'block', margin: '0 auto 6px auto' }} />
+                  Todos os materiais básicos e acabamentos estão abastecidos acima do estoque mínimo.
+                </div>
+              ) : (
+                <div className="table-responsive" style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                  <table className="products-table" style={{ fontSize: '11.5px' }}>
+                    <thead>
+                      <tr>
+                        <th>Material</th>
+                        <th style={{ textAlign: 'center' }}>Qtd (Est./Mín)</th>
+                        <th style={{ textAlign: 'right' }}>Lucro Unit.</th>
+                        <th style={{ textAlign: 'center' }}>Giro</th>
+                        <th style={{ textAlign: 'center' }}>Prioridade</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recomendacoesReposicao.map((item, idx) => (
+                        <tr key={idx}>
+                          <td style={{ fontWeight: '600' }}>
+                            <span style={{ fontSize: '9px', display: 'block', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                              {item.category}
+                            </span>
+                            {item.name}
+                          </td>
+                          <td style={{ textAlign: 'center', color: 'var(--danger)', fontWeight: '600' }}>
+                            {item.stock} / {item.minStock}
+                          </td>
+                          <td style={{ textAlign: 'right', color: 'var(--success)', fontWeight: '700' }}>
+                            R$ {item.unitProfit.toFixed(2)}
+                          </td>
+                          <td style={{ textAlign: 'center', fontWeight: '600' }}>{item.qtySold} un.</td>
+                          <td style={{ textAlign: 'center' }}>
+                            <span className={`priority-badge ${item.priorityClass}`} style={{ fontSize: '9px', padding: '1px 6px' }}>
+                              {item.priorityLabel}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* PAINEL UNIFICADO 2: Giro Comercial & Dicas de Negócio */}
+            <div className="card" style={{ padding: '22px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                <TrendingUp size={20} style={{ color: 'var(--primary)' }} />
+                <h3 style={{ fontSize: '14px', fontWeight: '800', margin: 0, color: 'var(--text-primary)' }}>Giro de Estoque e Lucratividade</h3>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                
+                {/* Mais Vendidos */}
+                <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '12px', borderRadius: 'var(--radius-md)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                    <TrendingUp size={14} style={{ color: 'var(--success)' }} />
+                    <span style={{ fontSize: '12px', fontWeight: '700' }}>Líderes de Saída</span>
+                  </div>
+                  {maisVendidos.length === 0 ? (
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>Aguardando vendas no PDV.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {maisVendidos.map((p, idx) => (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', paddingBottom: '4px', borderBottom: '1px solid var(--border-color)' }}>
+                          <span style={{ fontWeight: '600', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {idx + 1}. {p.name}
+                          </span>
+                          <strong style={{ color: 'var(--primary)' }}>{p.qtySold} un.</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Encalhados */}
+                <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '12px', borderRadius: 'var(--radius-md)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                    <AlertTriangle size={14} style={{ color: 'var(--brand-yellow)' }} />
+                    <span style={{ fontSize: '12px', fontWeight: '700' }}>Parados no Depósito</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {menosVendidos.slice(0, 5).map((p, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', paddingBottom: '4px', borderBottom: '1px solid var(--border-color)' }}>
+                        <span style={{ fontWeight: '600', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: p.qtySold === 0 ? 'var(--text-muted)' : 'inherit' }}>
+                          {idx + 1}. {p.name}
+                        </span>
+                        <strong style={{ color: p.qtySold === 0 ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+                          {p.qtySold === 0 ? 'Sem Saída' : `${p.qtySold} un.`}
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '18px 0' }} />
+
+              {/* Diagnóstico Comercial Inteligente (IA) */}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '16px' }}>
+                  <Sparkles size={16} style={{ color: 'var(--primary)' }} />
+                  <span style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-primary)' }}>Diagnóstico Comercial Inteligente (IA)</span>
+                </div>
+                
+                <div className="ai-diagnostic-grid" style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                  gap: '12px'
+                }}>
+                  {/* Card 1: Margem e Rentabilidade */}
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '82px'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
+                        Margem Comercial Média
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: '800', color: averageMargin >= 30 ? 'var(--success)' : averageMargin >= 15 ? 'var(--warning)' : 'var(--danger)', lineHeight: '1.2' }}>
+                        {averageMargin.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
+                      {averageMargin >= 30 ? '🟢 Margem comercial excelente' : averageMargin >= 15 ? '🟡 Margem comercial regular' : '🔴 Margem baixa (Markup crítico)'}
+                    </div>
+                  </div>
+
+                  {/* Card 2: Ticket Médio */}
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '82px'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
+                        Ticket Médio por Venda
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--primary)', lineHeight: '1.2' }}>
+                        R$ {ticketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
+                      Base: <strong>{salesCount}</strong> faturamentos hoje/período.
+                    </div>
+                  </div>
+
+                  {/* Card 3: Capital Imobilizado */}
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '82px'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
+                        Capital Total no Estoque
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)', lineHeight: '1.2' }}>
+                        R$ {totalStockCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
+                      Parados: <strong style={{ color: deadStockCost > 0 ? 'var(--danger)' : 'inherit' }}>R$ {deadStockCost.toLocaleString('pt-BR')}</strong> (sem giro).
+                    </div>
+                  </div>
+
+                  {/* Card 4: Necessidade de Caixa */}
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '82px'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
+                        Investimento de Reposição
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: '800', color: replacementCost > 0 ? 'var(--warning)' : 'var(--success)', lineHeight: '1.2' }}>
+                        R$ {replacementCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
+                      {replacementCost > 0 ? `Repor ${emAlertaEstoque.length} itens abaixo do mínimo.` : '🟢 Estoque acima do mínimo.'}
+                    </div>
+                  </div>
+
+                  {/* Card 5: Potencial de Venda */}
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '82px'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
+                        Faturamento Potencial
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--primary)', lineHeight: '1.2' }}>
+                        R$ {potentialRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
+                      Valor total estimado se vender tudo.
+                    </div>
+                  </div>
+
+                  {/* Card 6: Saúde Operacional */}
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '82px'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '800', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.3px' }}>
+                        Resultado Líquido Operacional
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: '800', color: netProfit >= 0 ? 'var(--success)' : 'var(--danger)', lineHeight: '1.2' }}>
+                        R$ {netProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: '500' }}>
+                      {netProfit >= 0 ? '🟢 Operação comercial positiva' : '🔴 Operação deficitária (rever custos)'}
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+          </>
+        )}
+
+      </div>
+
+      {/* Coluna da Direita: Chat Interativo da IA */}
+      <div className="ai-chat-card">
+        
+        {/* Cabeçalho do Chat com botão de Configurações da Chave da API */}
+        <div className="ai-chat-header" style={{ justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div className="ai-chat-pulse"></div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontWeight: '800', fontSize: '14px' }}>Novo Lar Copilot</span>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                {apiKey ? 'Inteligência Real Gemini Ativa' : 'Modo Assistente Local'}
+              </span>
+            </div>
+          </div>
+          <button 
+            type="button"
+            className="chat-quick-btn" 
+            style={{ padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '4px' }}
+            onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+            title="Configurar Chave da API do Gemini"
+          >
+            <Database size={12} /> Configurar IA
+          </button>
+        </div>
+
+        {/* Gaveta de Configurações Retrátil */}
+        <div className={`ai-key-drawer ${isDrawerOpen ? 'open' : ''}`}>
+          <form onSubmit={handleSaveApiKey}>
+            <div className="ai-key-drawer-title">
+              <span>Chave de API do Gemini (Grátis):</span>
+              <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="ai-key-drawer-link">
+                Obter Chave Grátis ↗
+              </a>
+            </div>
+            <div className="ai-key-drawer-input-group">
+              <input 
+                type="password" 
+                placeholder="Insira sua API Key do Gemini aqui..."
+                value={keyInput}
+                onChange={(e) => setKeyInput(e.target.value)}
+                className="chat-input"
+                style={{ padding: '8px 12px', fontSize: '12px' }}
+              />
+              <button type="submit" className="chat-submit-btn" style={{ padding: '8px 14px' }}>
+                Salvar
+              </button>
+            </div>
+            {saveStatus && (
+              <div style={{ fontSize: '11px', color: 'var(--success)', marginTop: '6px', fontWeight: 'bold' }}>
+                {saveStatus}
+              </div>
+            )}
+          </form>
+        </div>
+
+        {/* Balão de Mensagens do Chat com Avatares Estilizados */}
+        <div className="ai-chat-messages">
+          {messages.map((msg, idx) => (
+            <div key={idx} className="chat-avatar-wrapper" style={{ flexDirection: msg.sender === 'user' ? 'row-reverse' : 'row' }}>
+              
+              {/* Círculo do Avatar */}
+              <div className={`chat-avatar ${msg.sender === 'user' ? 'user' : ''}`}>
+                {msg.sender === 'user' ? 'U' : 'N'}
+              </div>
+
+              {/* Bolha de Mensagem */}
+              <div className="chat-message-container">
+                <span className={`chat-sender-name ${msg.sender === 'user' ? 'user' : ''}`}>
+                  {msg.sender === 'user' ? 'Lojista' : 'Novo Lar Copilot'}
+                </span>
+                <div className={`chat-bubble ${msg.sender}`}>
+                  {formatMessageText(msg.text)}
+                  <div style={{ 
+                    fontSize: '9px', 
+                    textAlign: msg.sender === 'user' ? 'right' : 'left', 
+                    opacity: 0.6, 
+                    marginTop: '4px' 
+                  }}>
+                    {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          ))}
+          {isTyping && (
+            <div className="chat-avatar-wrapper">
+              <div className="chat-avatar">N</div>
+              <div className="chat-message-container">
+                <span className="chat-sender-name">Novo Lar Copilot</span>
+                <div className="chat-bubble ai">
+                  <div className="typing-dots">
+                    <div className="typing-dot"></div>
+                    <div className="typing-dot"></div>
+                    <div className="typing-dot"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Sugestões de Perguntas Rápidas */}
+        <div className="chat-quick-questions">
+          <button 
+            className="chat-quick-btn"
+            onClick={() => handleAskAI('Quais produtos trazem mais lucro na loja?')}
+          >
+            📈 Produtos mais Lucrativos
+          </button>
+          <button 
+            className="chat-quick-btn"
+            onClick={() => handleAskAI('O que preciso comprar para repor estoque hoje?')}
+          >
+            📋 O que Comprar Hoje?
+          </button>
+          <button 
+            className="chat-quick-btn"
+            onClick={() => handleAskAI('Quais produtos estão encalhados no estoque?')}
+          >
+            💤 Produtos Encalhados
+          </button>
+          <button 
+            className="chat-quick-btn"
+            onClick={() => handleAskAI('Dicas de mercado para aumentar as vendas')}
+          >
+            💡 Ideias de Mercado
+          </button>
+        </div>
+
+        {/* Campo de Entrada de Texto */}
+        <div className="chat-input-area">
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAskAI(inputValue);
+            }} 
+            className="chat-form"
+          >
+            <input 
+              type="text" 
+              placeholder="Pergunte ao Assistente IA..."
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              className="chat-input"
+              disabled={isTyping}
+            />
+            <button 
+              type="submit" 
+              className="chat-submit-btn"
+              disabled={isTyping || !inputValue.trim()}
+            >
+              <Send size={14} />
+            </button>
+          </form>
+        </div>
+      </div>
+
+    </div>
+  );
+}

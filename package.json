@@ -1,0 +1,53 @@
+{
+  "name": "constru-control",
+  "version": "1.0.0",
+  "description": "Sistema Comercial de Materiais de Construção",
+  "main": "electron.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "electron . --dev",
+    "electron:prod": "electron .",
+    "start": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron:dev\"",
+    "dist": "npm run build && electron-packager . ConstruControl --platform=win32 --arch=x64 --out=dist-electron --overwrite",
+    "pack": "npm run build && electron-packager . ConstruControl --platform=win32 --arch=x64 --out=dist-electron --overwrite"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.78.0",
+    "lucide-react": "^0.294.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "concurrently": "^8.2.0",
+    "electron": "^22.0.0",
+    "electron-builder": "^24.6.0",
+    "electron-packager": "^17.1.2",
+    "vite": "^4.4.0",
+    "wait-on": "^7.0.0"
+  },
+  "build": {
+    "appId": "com.construcontrol.app",
+    "productName": "ConstruControl",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron.js",
+      "preload.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
