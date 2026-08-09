@@ -21,6 +21,7 @@ const initialMockData = {
   ],
   sales: [],
   expenses: [],
+  closures: [], // Fechamentos de caixa
   syncQueue: [] // Fila de sincronização offline
 };
 
@@ -77,6 +78,11 @@ export async function loadDB() {
       }
     });
   }
+  if (!dbData.closures) {
+    dbData.closures = [];
+    migrated = true;
+  }
+
   if (migrated) {
     await saveDB(dbData);
   }
@@ -512,4 +518,80 @@ export async function runBackgroundSync() {
     status: processedCount > 0 ? 'syncing' : 'offline', 
     message: processedCount > 0 ? `Sincronizados ${processedCount} itens!` : 'Aguardando conexão...' 
   };
+}
+
+// ================== GESTÃO DE FECHAMENTO DE CAIXA ==================
+
+export async function getClosures() {
+  const db = await loadDB();
+  return db.closures || [];
+}
+
+export async function saveClosure(closureData) {
+  const db = await loadDB();
+  if (!db.closures) db.closures = [];
+
+  const newClosure = {
+    ...closureData,
+    id: Date.now().toString(),
+    closedAt: new Date().toISOString()
+  };
+
+  db.closures.push(newClosure);
+  await saveDB(db);
+
+  // Tentar enviar para nuvem assincronamente (se a tabela existir)
+  try {
+    await supabase.from('closures').insert({
+      id: newClosure.id,
+      store_id: newClosure.storeId,
+      date: newClosure.date,
+      closed_at: newClosure.closedAt,
+      expected_cash: newClosure.expectedCash,
+      actual_cash: newClosure.actualCash,
+      difference: newClosure.difference,
+      observations: newClosure.observations
+    });
+  } catch (err) {
+    console.warn("Erro ao salvar fechamento na nuvem", err);
+  }
+
+  return db.closures;
+}
+
+export async function getPendingClosures(storeId) {
+  const db = await loadDB();
+  const sales = db.sales ? db.sales.filter(s => s.storeId === storeId) : [];
+  const expenses = db.expenses ? db.expenses.filter(e => e.storeId === storeId) : [];
+  const closures = db.closures ? db.closures.filter(c => c.storeId === storeId) : [];
+
+  const activityDates = new Set();
+  const extractDate = (isoString) => {
+    // Retorna YYYY-MM-DD respeitando o timezone local
+    const d = new Date(isoString);
+    const offset = d.getTimezoneOffset() * 60000;
+    const localDate = new Date(d.getTime() - offset);
+    return localDate.toISOString().split('T')[0];
+  };
+
+  sales.forEach(s => activityDates.add(extractDate(s.timestamp)));
+  expenses.forEach(e => activityDates.add(extractDate(e.timestamp)));
+
+  // Obter data de hoje localmente
+  const d = new Date();
+  const offset = d.getTimezoneOffset() * 60000;
+  const today = new Date(d.getTime() - offset).toISOString().split('T')[0];
+  
+  const pendingDates = [];
+
+  activityDates.forEach(date => {
+    if (date < today) {
+      const isClosed = closures.some(c => c.date === date);
+      if (!isClosed) {
+        pendingDates.push(date);
+      }
+    }
+  });
+
+  return pendingDates.sort(); // Retorna as datas pendentes ordenadas
 }

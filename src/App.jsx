@@ -29,7 +29,8 @@ import {
   Send,
   Menu,
   Truck,
-  FileText
+  FileText,
+  Bell
 } from 'lucide-react';
 import { 
   getProducts, 
@@ -45,7 +46,9 @@ import {
   getStoreId,
   setStoreId,
   runBackgroundSync,
-  updateSaleDeliveryStatus
+  updateSaleDeliveryStatus,
+  getPendingClosures,
+  saveClosure
 } from './db';
 import { supabase } from './supabase';
 
@@ -185,6 +188,10 @@ export default function App() {
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
+  const [closureModalOpen, setClosureModalOpen] = useState(false);
+  const [closureTargetDate, setClosureTargetDate] = useState(null);
+  const [pendingClosures, setPendingClosures] = useState([]);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
   // Buscar dados ao iniciar
   const fetchData = async () => {
@@ -195,6 +202,9 @@ export default function App() {
       setSales(db.sales || []);
       setExpenses(db.expenses || []);
       setSyncPendingCount(db.syncQueue ? db.syncQueue.length : 0);
+      
+      const pendings = await getPendingClosures(getStoreId());
+      setPendingClosures(pendings);
     } catch (error) {
       console.error("Erro ao carregar dados do banco:", error);
     } finally {
@@ -476,12 +486,100 @@ export default function App() {
   // Estatísticas e KPI Computados (filtrados por loja logada)
   const filteredSales = sales.filter(s => s.storeId === storeId);
   const filteredExpenses = expenses.filter(e => e.storeId === storeId);
+  
+  // =====================================
+  // GERAÇÃO DE NOTIFICAÇÕES (Dropdown)
+  // =====================================
+  const notifications = [];
+  
+  // Datas base para cálculo
+  const todayDateObj = new Date();
+  const todayOffset = todayDateObj.getTimezoneOffset() * 60000;
+  const todayStr = new Date(todayDateObj.getTime() - todayOffset).toISOString().split('T')[0];
+  
+  const tomorrowDateObj = new Date(todayDateObj);
+  tomorrowDateObj.setDate(tomorrowDateObj.getDate() + 1);
+  const tomorrowStr = new Date(tomorrowDateObj.getTime() - (tomorrowDateObj.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+
+  // 1. Notificações de Fechamento de Caixa
+  pendingClosures.forEach(date => {
+    notifications.push({
+      id: `closure-${date}`,
+      type: 'closure',
+      icon: <AlertTriangle size={18} style={{ color: 'var(--danger)' }} />,
+      title: 'Caixa Aberto',
+      message: `O caixa do dia ${date.split('-').reverse().join('/')} não foi fechado.`,
+      onClick: () => {
+        setClosureTargetDate(date);
+        setClosureModalOpen(true);
+        setIsNotificationsOpen(false);
+      }
+    });
+  });
+
+  // 2. Notificações de Entregas Pendentes
+  sales.filter(s => s.storeId === storeId).forEach(sale => {
+    if (sale.deliveryDetails && sale.deliveryDetails.requiresDelivery && sale.deliveryDetails.status !== 'delivered') {
+      const delDate = sale.deliveryDetails.date;
+      if (delDate === todayStr) {
+        notifications.push({
+          id: `del-${sale.id}`,
+          type: 'delivery_today',
+          icon: <Truck size={18} style={{ color: 'var(--brand-yellow)' }} />,
+          title: 'Entrega para Hoje!',
+          message: `Pedido #${sale.id.substring(sale.id.length - 4)} para ${sale.deliveryDetails.receiver || 'Cliente'}.`,
+          onClick: () => {
+            setActiveTab('admin-deliveries');
+            setIsNotificationsOpen(false);
+          }
+        });
+      } else if (delDate === tomorrowStr) {
+        notifications.push({
+          id: `del-${sale.id}`,
+          type: 'delivery_tomorrow',
+          icon: <Package size={18} style={{ color: 'var(--primary)' }} />,
+          title: 'Entrega Amanhã',
+          message: `Prepare o pedido #${sale.id.substring(sale.id.length - 4)} para ${sale.deliveryDetails.receiver || 'Cliente'}.`,
+          onClick: () => {
+            setActiveTab('admin-deliveries');
+            setIsNotificationsOpen(false);
+          }
+        });
+      } else if (delDate && delDate < todayStr) {
+        notifications.push({
+          id: `del-${sale.id}`,
+          type: 'delivery_late',
+          icon: <AlertTriangle size={18} style={{ color: 'var(--danger)' }} />,
+          title: 'Entrega Atrasada',
+          message: `O pedido #${sale.id.substring(sale.id.length - 4)} estava agendado para ${delDate.split('-').reverse().join('/')}.`,
+          onClick: () => {
+            setActiveTab('admin-deliveries');
+            setIsNotificationsOpen(false);
+          }
+        });
+      }
+    }
+  });
 
   const totalSalesValue = filteredSales.reduce((sum, s) => sum + s.totalPrice, 0);
   const totalProfitValue = filteredSales.reduce((sum, s) => sum + s.profit, 0);
   const totalExpensesValue = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
   const netCash = totalSalesValue - totalExpensesValue;
   const lowStockCount = products.filter(p => p.stock <= p.minStock).length;
+
+  const handleClosure = async (closureData) => {
+    try {
+      await saveClosure(closureData);
+      showScanNotification(`Caixa fechado para o dia ${closureData.date}`);
+      setClosureModalOpen(false);
+      setClosureTargetDate(null);
+      const pendings = await getPendingClosures(storeId);
+      setPendingClosures(pendings);
+    } catch (e) {
+      console.error("Erro ao fechar caixa:", e);
+      showScanNotification("Erro ao fechar caixa", "error");
+    }
+  };
 
   return (
     <div className="app-container">
@@ -709,6 +807,79 @@ export default function App() {
           </div>
 
           <div className="header-actions">
+            {/* Sino de Notificações (Dropdown) */}
+            <div style={{ position: 'relative' }}>
+              <div 
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px' }}
+                onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+                title={notifications.length > 0 ? `Existem ${notifications.length} nova(s) notificação(ões)` : 'Sem notificações'}
+              >
+                <Bell size={24} style={{ color: 'var(--text-primary)', animation: notifications.length > 0 ? 'pulse 2s infinite' : 'none' }} />
+                {notifications.length > 0 && (
+                  <span style={{ position: 'absolute', top: 0, right: 0, backgroundColor: 'var(--danger)', color: '#fff', fontSize: '10px', fontWeight: 'bold', width: '16px', height: '16px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {notifications.length}
+                  </span>
+                )}
+              </div>
+
+              {/* Dropdown Menu de Notificações */}
+              {isNotificationsOpen && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: '8px',
+                  width: '320px',
+                  backgroundColor: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-lg)',
+                  boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                  zIndex: 2000,
+                  overflow: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column'
+                }}>
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-color)', fontWeight: '700', fontSize: '14px', backgroundColor: 'var(--bg-tertiary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    Notificações
+                    <span style={{ fontSize: '11px', backgroundColor: 'var(--primary)', color: '#fff', padding: '2px 8px', borderRadius: '12px' }}>{notifications.length} Novas</span>
+                  </div>
+                  
+                  <div style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                    {notifications.length === 0 ? (
+                      <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                        <CheckCircle size={32} style={{ color: 'var(--success)', opacity: 0.5, margin: '0 auto 8px auto' }} />
+                        <br/>Tudo tranquilo por aqui!<br/>Nenhuma notificação pendente.
+                      </div>
+                    ) : (
+                      notifications.map(notif => (
+                        <div 
+                          key={notif.id}
+                          onClick={notif.onClick}
+                          style={{
+                            padding: '12px 16px',
+                            borderBottom: '1px solid var(--border-color)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            gap: '12px',
+                            alignItems: 'flex-start',
+                            transition: 'background-color 0.2s'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          <div style={{ marginTop: '2px' }}>{notif.icon}</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '13px', fontWeight: '700', marginBottom: '2px', color: 'var(--text-primary)' }}>{notif.title}</div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>{notif.message}</div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Status do Código de Barras */}
             <div className={`scanner-status ${scannerActive ? 'active' : ''}`}>
               <Barcode size={16} />
@@ -724,6 +895,22 @@ export default function App() {
             {(activeTab === 'admin-finance' || activeTab === 'history') && (
               <button className="btn-primary" style={{ padding: '10px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => setExpenseModalOpen(true)}>
                 <Plus size={16} /> <span className="btn-text-responsive">Registrar Despesa</span>
+              </button>
+            )}
+            
+            {(activeTab === 'daily-data' || activeTab === 'pdv') && (
+              <button 
+                className="btn-primary" 
+                style={{ padding: '10px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--brand-yellow)', color: '#000' }} 
+                onClick={() => {
+                  const d = new Date();
+                  const offset = d.getTimezoneOffset() * 60000;
+                  const todayStr = new Date(d.getTime() - offset).toISOString().split('T')[0];
+                  setClosureTargetDate(todayStr);
+                  setClosureModalOpen(true);
+                }}
+              >
+                <CheckCircle size={16} /> <span className="btn-text-responsive">Fechar Caixa (Hoje)</span>
               </button>
             )}
           </div>
@@ -880,6 +1067,18 @@ export default function App() {
           onClose={() => { setInvoiceModalOpen(false); setSelectedInvoiceSale(null); }}
         />
       )}
+
+      {/* MODAL DE FECHAMENTO DE CAIXA */}
+      {closureModalOpen && !pendingClosures.length && (
+        <ClosureModal 
+          date={closureTargetDate}
+          sales={sales}
+          expenses={expenses}
+          storeId={storeId}
+          onClose={() => { setClosureModalOpen(false); setClosureTargetDate(null); }}
+          onSave={handleClosure}
+        />
+      )}
     </div>
   );
 }
@@ -902,6 +1101,7 @@ function DashboardView({
   onImportBackup
 }) {
   const [viewMode, setViewMode] = useState('local'); // 'local' ou 'consolidated'
+  const [cloudStoreFilter, setCloudStoreFilter] = useState('all'); // 'all', 'loja-1', 'loja-2'
   const [timeRange, setTimeRange] = useState('month'); // 'month', 'year', 'all'
   const [cloudSales, setCloudSales] = useState([]);
   const [cloudExpenses, setCloudExpenses] = useState([]);
@@ -947,8 +1147,12 @@ function DashboardView({
     }
   }, [viewMode]);
 
-  const activeSales = viewMode === 'consolidated' ? cloudSales : sales;
-  const activeExpenses = viewMode === 'consolidated' ? cloudExpenses : expenses;
+  const activeSales = viewMode === 'consolidated' 
+    ? (cloudStoreFilter === 'all' ? cloudSales : cloudSales.filter(s => s.storeId === cloudStoreFilter))
+    : sales;
+  const activeExpenses = viewMode === 'consolidated' 
+    ? (cloudStoreFilter === 'all' ? cloudExpenses : cloudExpenses.filter(e => e.storeId === cloudStoreFilter))
+    : expenses;
 
   // Filtragem por período
   const getFilteredDataByRange = (items) => {
@@ -1085,39 +1289,94 @@ function DashboardView({
             {viewMode === 'local' ? 'Exibindo dados apenas desta loja física' : 'Exibindo faturamento consolidado de todas as lojas ao vivo'}
           </span>
         </div>
-        <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-sm)' }}>
-          <button 
-            onClick={() => setViewMode('local')}
-            style={{
-              padding: '6px 14px',
-              fontSize: '12px',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              backgroundColor: viewMode === 'local' ? 'var(--bg-card)' : 'transparent',
-              color: viewMode === 'local' ? 'var(--primary)' : 'var(--text-secondary)',
-              fontWeight: '700',
-              cursor: 'pointer',
-              transition: 'var(--transition)'
-            }}
-          >
-            Esta Loja (Local)
-          </button>
-          <button 
-            onClick={() => setViewMode('consolidated')}
-            style={{
-              padding: '6px 14px',
-              fontSize: '12px',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              backgroundColor: viewMode === 'consolidated' ? 'var(--bg-card)' : 'transparent',
-              color: viewMode === 'consolidated' ? 'var(--primary)' : 'var(--text-secondary)',
-              fontWeight: '700',
-              cursor: 'pointer',
-              transition: 'var(--transition)'
-            }}
-          >
-            Rede (Ao Vivo)
-          </button>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-sm)' }}>
+            <button 
+              onClick={() => setViewMode('local')}
+              style={{
+                padding: '6px 14px',
+                fontSize: '12px',
+                borderRadius: 'var(--radius-sm)',
+                border: 'none',
+                backgroundColor: viewMode === 'local' ? 'var(--bg-card)' : 'transparent',
+                color: viewMode === 'local' ? 'var(--primary)' : 'var(--text-secondary)',
+                fontWeight: '700',
+                cursor: 'pointer',
+                transition: 'var(--transition)'
+              }}
+            >
+              Esta Loja (Local)
+            </button>
+            <button 
+              onClick={() => setViewMode('consolidated')}
+              style={{
+                padding: '6px 14px',
+                fontSize: '12px',
+                borderRadius: 'var(--radius-sm)',
+                border: 'none',
+                backgroundColor: viewMode === 'consolidated' ? 'var(--bg-card)' : 'transparent',
+                color: viewMode === 'consolidated' ? 'var(--primary)' : 'var(--text-secondary)',
+                fontWeight: '700',
+                cursor: 'pointer',
+                transition: 'var(--transition)'
+              }}
+            >
+              Rede (Ao Vivo)
+            </button>
+          </div>
+          
+          {viewMode === 'consolidated' && (
+            <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--primary-glow)' }}>
+              <button 
+                onClick={() => setCloudStoreFilter('all')}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: 'none',
+                  backgroundColor: cloudStoreFilter === 'all' ? 'var(--primary)' : 'transparent',
+                  color: cloudStoreFilter === 'all' ? '#000' : 'var(--text-secondary)',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  transition: 'var(--transition)'
+                }}
+              >
+                Todas as Lojas
+              </button>
+              <button 
+                onClick={() => setCloudStoreFilter('loja-1')}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: 'none',
+                  backgroundColor: cloudStoreFilter === 'loja-1' ? 'var(--primary)' : 'transparent',
+                  color: cloudStoreFilter === 'loja-1' ? '#000' : 'var(--text-secondary)',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  transition: 'var(--transition)'
+                }}
+              >
+                Loja 1
+              </button>
+              <button 
+                onClick={() => setCloudStoreFilter('loja-2')}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: 'none',
+                  backgroundColor: cloudStoreFilter === 'loja-2' ? 'var(--primary)' : 'transparent',
+                  color: cloudStoreFilter === 'loja-2' ? '#000' : 'var(--text-secondary)',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  transition: 'var(--transition)'
+                }}
+              >
+                Loja 2
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1198,17 +1457,22 @@ function DashboardView({
 
       {loadingCloud && (
         <div style={{
-          textAlign: 'center',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
           padding: '8px',
           color: 'var(--primary)',
           fontWeight: '600',
           fontSize: '13px',
           backgroundColor: 'var(--bg-card)',
           borderRadius: 'var(--radius-sm)',
-          border: '1px solid var(--border-color)',
-          boxShadow: 'var(--shadow-sm)'
+          border: '1px solid var(--primary-glow)',
+          boxShadow: 'var(--shadow-sm)',
+          animation: 'pulse 2s infinite'
         }}>
-          Buscando faturamento consolidado na nuvem Supabase...
+          <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--primary)', animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }}></div>
+          Buscando novas vendas na nuvem...
         </div>
       )}
 
@@ -1359,7 +1623,76 @@ function DashboardView({
             </button>
           )}
       </div>
-    </div>
+      </div>
+
+      {/* Painel de Vendas Recentes da Rede (Apenas modo Consolidado) */}
+      {viewMode === 'consolidated' && (
+        <div className="section-card" style={{ marginTop: '24px' }}>
+          <div className="card-header">
+            <h2 className="card-title">
+              <History size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
+              Vendas Recentes na Rede
+            </h2>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              Últimas transações sincronizadas ao vivo
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px', maxHeight: '300px', overflowY: 'auto' }}>
+            {activeSales.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                Nenhuma venda registrada na rede para os filtros atuais.
+              </div>
+            ) : (
+              [...activeSales]
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                .slice(0, 10)
+                .map((sale, idx) => {
+                  const saleDate = new Date(sale.timestamp);
+                  const storeName = sale.storeId === 'loja-1' ? 'Loja 1' : sale.storeId === 'loja-2' ? 'Loja 2' : sale.storeId;
+                  const storeColor = sale.storeId === 'loja-1' ? 'var(--primary)' : 'var(--brand-yellow)';
+                  const itemsCount = sale.items ? sale.items.reduce((sum, item) => sum + (item.quantity || 1), 0) : 0;
+                  return (
+                    <div key={idx} style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center', 
+                      padding: '12px', 
+                      backgroundColor: 'var(--bg-tertiary)', 
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-color)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ padding: '8px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', color: 'var(--primary)' }}>
+                          <ShoppingBag size={18} />
+                        </div>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>{sale.id}</span>
+                            <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-secondary)', color: storeColor, border: `1px solid ${storeColor}40` }}>
+                              {storeName}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                            {saleDate.toLocaleDateString('pt-BR')} às {saleDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} • {itemsCount} {itemsCount === 1 ? 'item' : 'itens'}
+                          </span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-primary)' }}>
+                          R$ {sale.totalPrice.toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>
+                          {sale.paymentMethod}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Painel de Backups do Terminal */}
       <div className="section-card" style={{ marginTop: '24px' }}>
         <div className="card-header">
@@ -4598,6 +4931,128 @@ function InvoiceModal({ sale, onClose }) {
           <button className="btn-primary" onClick={handlePrint} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Printer size={16} /> Imprimir Nota Fiscal
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// COMPONENTE: MODAL DE FECHAMENTO DE CAIXA
+// ==========================================
+function ClosureModal({ date, sales, expenses, storeId, onClose, onSave }) {
+  const [actualCash, setActualCash] = useState('');
+  const [observations, setObservations] = useState('');
+
+  // Filtrar vendas e despesas do dia específico para a loja logada
+  const dateStr = date; // YYYY-MM-DD
+  const daySales = sales.filter(s => s.storeId === storeId && s.timestamp.startsWith(dateStr));
+  const dayExpenses = expenses.filter(e => e.storeId === storeId && e.timestamp.startsWith(dateStr));
+
+  const totalSales = daySales.reduce((acc, s) => acc + s.totalPrice, 0);
+  const totalCashSales = daySales.filter(s => s.paymentMethod === 'Dinheiro').reduce((acc, s) => acc + s.totalPrice, 0);
+  const totalPixSales = daySales.filter(s => s.paymentMethod === 'Pix').reduce((acc, s) => acc + s.totalPrice, 0);
+  const totalCardSales = daySales.filter(s => s.paymentMethod.includes('Cartão')).reduce((acc, s) => acc + s.totalPrice, 0);
+  
+  const totalExpenses = dayExpenses.reduce((acc, e) => acc + e.amount, 0);
+
+  // O "dinheiro em caixa esperado" normalmente é: Vendas em Dinheiro - Despesas pagas no dia
+  // Assumindo que despesas saem do caixa de dinheiro físico:
+  const expectedCash = totalCashSales - totalExpenses;
+  
+  const handleSave = () => {
+    const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;
+    const diff = cashVal - expectedCash;
+    
+    onSave({
+      storeId,
+      date: dateStr,
+      expectedCash,
+      actualCash: cashVal,
+      difference: diff,
+      observations
+    });
+  };
+
+  const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;
+  const currentDiff = cashVal - expectedCash;
+
+  return (
+    <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+      <div className="modal-content glass-card" style={{ width: '100%', maxWidth: '500px', padding: '24px', borderRadius: 'var(--radius-lg)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
+            <CheckCircle size={20} className="text-primary" /> Fechamento de Caixa
+          </h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '16px', borderRadius: 'var(--radius-md)', marginBottom: '20px' }}>
+          <div style={{ fontSize: '14px', fontWeight: '700', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+            Resumo do Dia: {dateStr.split('-').reverse().join('/')}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>Vendas Totais:</span>
+            <span style={{ fontWeight: '700' }}>R$ {totalSales.toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '12px', paddingLeft: '12px' }}>
+            <span style={{ color: 'var(--text-muted)' }}>- Dinheiro:</span>
+            <span style={{ color: 'var(--text-secondary)' }}>R$ {totalCashSales.toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '12px', paddingLeft: '12px' }}>
+            <span style={{ color: 'var(--text-muted)' }}>- Pix:</span>
+            <span style={{ color: 'var(--text-secondary)' }}>R$ {totalPixSales.toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '12px', paddingLeft: '12px' }}>
+            <span style={{ color: 'var(--text-muted)' }}>- Cartão:</span>
+            <span style={{ color: 'var(--text-secondary)' }}>R$ {totalCardSales.toFixed(2)}</span>
+          </div>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '13px' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>Despesas (Retiradas):</span>
+            <span style={{ fontWeight: '700', color: 'var(--danger)' }}>- R$ {totalExpenses.toFixed(2)}</span>
+          </div>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-color)', fontSize: '15px' }}>
+            <span style={{ fontWeight: '800' }}>Dinheiro Esperado em Gaveta:</span>
+            <span style={{ fontWeight: '800', color: 'var(--primary)' }}>R$ {expectedCash.toFixed(2)}</span>
+          </div>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Valor em Dinheiro Físico (R$)</label>
+          <input 
+            type="number" 
+            step="0.01" 
+            className="form-input" 
+            placeholder="0.00" 
+            value={actualCash} 
+            onChange={(e) => setActualCash(e.target.value)}
+            style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
+          />
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Diferença</label>
+          <div style={{ padding: '10px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', color: currentDiff === 0 ? 'var(--text-secondary)' : (currentDiff < 0 ? 'var(--danger)' : 'var(--success)'), fontWeight: '700' }}>
+            R$ {currentDiff.toFixed(2)} {currentDiff < 0 ? '(Falta)' : (currentDiff > 0 ? '(Sobra)' : '(Exato)')}
+          </div>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '24px' }}>
+          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Observações (Opcional)</label>
+          <textarea 
+            className="form-input" 
+            rows="2"
+            value={observations} 
+            onChange={(e) => setObservations(e.target.value)}
+            style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff', resize: 'vertical' }}
+          ></textarea>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+          <button onClick={onClose} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: '600' }}>Cancelar</button>
+          <button onClick={handleSave} className="btn-primary" style={{ padding: '10px 24px', fontWeight: '700' }}>Confirmar Fechamento</button>
         </div>
       </div>
     </div>

@@ -42,3 +42,15 @@ CREATE TABLE IF NOT EXISTS expenses (
 ALTER TABLE products DISABLE ROW LEVEL SECURITY;
 ALTER TABLE sales DISABLE ROW LEVEL SECURITY;
 ALTER TABLE expenses DISABLE ROW LEVEL SECURITY;
+-- 5. Tabela de Fechamentos de Caixa (Closures)
+CREATE TABLE IF NOT EXISTS closures (
+    id TEXT PRIMARY KEY,
+    store_id TEXT NOT NULL,
+    date TEXT NOT NULL, -- YYYY-MM-DD
+    closed_at TIMESTAMPTZ NOT NULL,
+    expected_cash NUMERIC(10, 2) NOT NULL,
+    actual_cash NUMERIC(10, 2) NOT NULL,
+    difference NUMERIC(10, 2) NOT NULL,
+    observations TEXT
+);
+ALTER TABLE closures DISABLE ROW LEVEL SECURITY;
