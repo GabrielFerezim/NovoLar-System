@@ -603,17 +603,8 @@ export default function App() {
 
       {/* Sidebar Lateral */}
       <aside className={`sidebar ${isMobileMenuOpen ? 'mobile-open' : ''}`}>
-        <div className="sidebar-brand">
-          <div className="brand-icon" style={{ width: '40px', height: '40px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
-            <ShoppingBag size={20} />
-          </div>
-          <div className="brand-name">
-            <span style={{ fontSize: '18px', fontWeight: '800', color: 'var(--primary)', lineHeight: '1' }}>NOVO LAR</span>
-            <span style={{ fontSize: '9px', fontWeight: '800', color: 'var(--text-primary)', letterSpacing: '0.5px', marginTop: '2px' }}>CASA & CONSTRUÇÃO</span>
-            <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-muted)', marginTop: '4px', textTransform: 'uppercase' }}>
-              Sistema Comercial
-            </span>
-          </div>
+        <div className="sidebar-brand" style={{ padding: '16px', display: 'flex', justifyContent: 'center' }}>
+          <img src="/logo.png" alt="Novo Lar Logo" style={{ width: '100%', maxWidth: '180px', height: 'auto', objectFit: 'contain' }} />
         </div>
 
         <nav className="sidebar-menu">
@@ -2937,18 +2928,8 @@ function LoginView({ onLogin }) {
   return (
     <div className="login-overlay">
       <div className="login-card">
-        <div className="login-logo-container">
-          <svg width="48" height="48" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 13 L16 3 L29 13 L25 13 L16 5.5 L7 13 Z" fill="#d82d33" />
-            <rect x="8" y="14" width="7" height="7" rx="1.5" fill="#f3b41d" />
-            <rect x="17" y="14" width="7" height="7" rx="1.5" fill="#f3b41d" />
-            <rect x="8" y="22" width="7" height="7" rx="1.5" fill="#f3b41d" />
-            <rect x="17" y="22" width="7" height="7" rx="1.5" fill="#f3b41d" />
-          </svg>
-          <div className="login-brand-name">
-            <span className="brand-main">NOVO LAR</span>
-            <span className="brand-sub">CASA & CONSTRUÇÃO</span>
-          </div>
+        <div className="login-logo-container" style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+          <img src="/logo.png" alt="Novo Lar Logo" style={{ width: '100%', maxWidth: '280px', height: 'auto', objectFit: 'contain' }} />
         </div>
         
         <h2 className="login-title">Acesso ao Sistema</h2>
@@ -3581,6 +3562,9 @@ function ReceiptModal({ receipt, onClose }) {
               fontSize: '13px'
             }}
           >
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '12px' }}>
+              <img src={window.location.origin + "/logo.png"} alt="Novo Lar Logo" style={{ maxWidth: '140px', height: 'auto', display: 'block', margin: '0 auto' }} />
+            </div>
             <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>NOVO LAR CASA & CONSTRUÇÃO</div>
             <div style={{ textAlign: 'center', fontSize: '11px', color: '#666', marginTop: '2px' }}>LOJA MATRIZ - CNPJ: 12.345.678/0001-90</div>
             <div style={{ textAlign: 'center', fontSize: '11px', color: '#666' }}>Rua das Ferramentas, 100 - Centro</div>
