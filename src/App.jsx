@@ -49,6 +49,7 @@ import {
   getStoreId,
   setStoreId,
   runBackgroundSync,
+  syncAllFromCloud,
   updateSaleDeliveryStatus,
   getPendingClosures,
   saveClosure,
@@ -253,6 +254,10 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
+      // 1. Tenta puxar tudo da nuvem primeiro (garante dados iguais no Electron e Vercel)
+      await syncAllFromCloud();
+
+      // 2. Carrega os dados locais (agora atualizados com a nuvem)
       const db = await loadDB();
       setProducts(db.products || []);
       setSales(db.sales || []);

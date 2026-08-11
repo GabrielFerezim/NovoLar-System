@@ -96,6 +96,133 @@ export async function saveDB(data) {
   return true;
 }
 
+// ========================================================
+// SINCRONIZAÇÃO COMPLETA DA NUVEM → LOCAL (Cloud-first)
+// Chamado na inicialização para garantir que Electron e
+// Vercel mostrem exatamente os mesmos dados do Supabase.
+// ========================================================
+export async function syncAllFromCloud() {
+  try {
+    // Buscar tudo do Supabase em paralelo
+    const [
+      { data: cloudProducts },
+      { data: cloudSales },
+      { data: cloudExpenses },
+      { data: cloudClosures },
+      { data: cloudAccounts }
+    ] = await Promise.all([
+      supabase.from('products').select('*').order('name', { ascending: true }),
+      supabase.from('sales').select('*').order('timestamp', { ascending: false }),
+      supabase.from('expenses').select('*').order('timestamp', { ascending: false }),
+      supabase.from('closures').select('*'),
+      supabase.from('credit_accounts').select('*')
+    ]);
+
+    // Carregar banco local para manter a fila de sync e dados extras
+    const localDb = await loadDB();
+
+    // Transformar produtos (parse de stockLoja1/stockLoja2 do campo description)
+    const products = (cloudProducts || []).map(cp => {
+      const rawDesc = cp.description || '';
+      const match = rawDesc.match(/\s\[STOCKS:(\d+)\|(\d+)\]$/);
+      let stockLoja1 = parseFloat(cp.stock) || 0;
+      let stockLoja2 = 0;
+      let cleanDescription = rawDesc;
+      if (match) {
+        stockLoja1 = parseInt(match[1]) || 0;
+        stockLoja2 = parseInt(match[2]) || 0;
+        cleanDescription = rawDesc.replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+      }
+      return {
+        id: cp.id,
+        code: cp.code,
+        name: cp.name,
+        description: cleanDescription,
+        costPrice: parseFloat(cp.cost_price),
+        salePrice: parseFloat(cp.sale_price),
+        stockLoja1,
+        stockLoja2,
+        stock: stockLoja1 + stockLoja2,
+        minStock: cp.min_stock,
+        category: cp.category,
+        unit: cp.unit
+      };
+    });
+
+    // Transformar vendas
+    const sales = (cloudSales || []).map(s => ({
+      id: s.id,
+      timestamp: s.timestamp,
+      totalPrice: parseFloat(s.total_price),
+      totalCost: parseFloat(s.total_cost),
+      profit: parseFloat(s.profit),
+      paymentMethod: s.payment_method,
+      storeId: s.store_id,
+      items: s.items,
+      synced: true
+    }));
+
+    // Transformar despesas
+    const expenses = (cloudExpenses || []).map(e => ({
+      id: e.id,
+      timestamp: e.timestamp,
+      description: e.description,
+      amount: parseFloat(e.amount),
+      category: e.category,
+      storeId: e.store_id,
+      synced: true
+    }));
+
+    // Transformar fechamentos
+    const closures = (cloudClosures || []).map(c => ({
+      id: c.id,
+      storeId: c.store_id,
+      date: c.date,
+      closedAt: c.closed_at,
+      expectedCash: parseFloat(c.expected_cash),
+      actualCash: parseFloat(c.actual_cash),
+      difference: parseFloat(c.difference),
+      observations: c.observations
+    }));
+
+    // Transformar fiados
+    const creditAccounts = (cloudAccounts || []).map(ca => ({
+      id: ca.id,
+      name: ca.name,
+      address: ca.address || '',
+      phone: ca.phone || '',
+      balance: parseFloat(ca.balance) || 0,
+      history: Array.isArray(ca.history) ? ca.history : []
+    }));
+
+    // Mesclar: cloud é a verdade, mas mantemos itens locais pendentes de sync
+    const localOnlySales = (localDb.sales || []).filter(
+      ls => !ls.synced && !sales.find(s => s.id === ls.id)
+    );
+    const localOnlyExpenses = (localDb.expenses || []).filter(
+      le => !le.synced && !expenses.find(e => e.id === le.id)
+    );
+
+    const mergedDb = {
+      ...localDb,
+      products,
+      sales: [...sales, ...localOnlySales],
+      expenses: [...expenses, ...localOnlyExpenses],
+      closures,
+      creditAccounts,
+      syncQueue: localDb.syncQueue || []
+    };
+
+    await saveDB(mergedDb);
+    console.log('✅ Dados sincronizados da nuvem com sucesso!');
+    return { success: true, data: mergedDb };
+  } catch (e) {
+    console.warn('⚠️ Sem conexão — usando dados locais como fallback.', e);
+    return { success: false };
+  }
+}
+
+
 // ================== FUNÇÕES AUXILIARES CRUD COM CLOUD SYNC ==================
 
 // PRODUTOS
