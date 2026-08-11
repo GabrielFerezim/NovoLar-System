@@ -152,14 +152,14 @@ export async function syncAllFromCloud() {
     // Transformar produtos (parse de stockLoja1/stockLoja2 do campo description)
     const products = (cloudProducts || []).map(cp => {
       const rawDesc = cp.description || '';
-      const match = rawDesc.match(/\s\[STOCKS:(\d+)\|(\d+)\]$/);
+      const match = rawDesc.match(/\s?\[STOCKS:(\d+)\|(\d+)\]$/);
       let stockLoja1 = parseFloat(cp.stock) || 0;
       let stockLoja2 = 0;
       let cleanDescription = rawDesc;
       if (match) {
         stockLoja1 = parseInt(match[1]) || 0;
         stockLoja2 = parseInt(match[2]) || 0;
-        cleanDescription = rawDesc.replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+        cleanDescription = rawDesc.replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
       }
       return {
         id: String(cp.id),
@@ -289,7 +289,7 @@ export async function saveProduct(product) {
 
   const stock1 = targetProduct.stockLoja1 ?? targetProduct.stock ?? 0;
   const stock2 = targetProduct.stockLoja2 ?? 0;
-  const cleanDesc = (targetProduct.description || '').replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+  const cleanDesc = (targetProduct.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
   const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
 
   // Tentar enviar para a nuvem de forma assíncrona
@@ -414,7 +414,7 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
       if (originalProduct) {
         const stock1 = originalProduct.stockLoja1 ?? originalProduct.stock ?? 0;
         const stock2 = originalProduct.stockLoja2 ?? 0;
-        const cleanDesc = (originalProduct.description || '').replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+        const cleanDesc = (originalProduct.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
         const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
 
         await supabase.from('products').update({
@@ -576,7 +576,7 @@ export async function runBackgroundSync() {
           const idx = merged.findIndex(p => String(p.id) === cpId);
           
           const rawDesc = cp.description || '';
-          const match = rawDesc.match(/\s\[STOCKS:(\d+)\|(\d+)\]$/);
+          const match = rawDesc.match(/\s?\[STOCKS:(\d+)\|(\d+)\]$/);
           let stockLoja1 = parseFloat(cp.stock) || 0;
           let stockLoja2 = 0;
           let cleanDescription = rawDesc;
@@ -584,7 +584,7 @@ export async function runBackgroundSync() {
           if (match) {
             stockLoja1 = parseInt(match[1]) || 0;
             stockLoja2 = parseInt(match[2]) || 0;
-            cleanDescription = rawDesc.replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+            cleanDescription = rawDesc.replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
           }
 
           const cpTransformed = {
@@ -697,7 +697,7 @@ export async function runBackgroundSync() {
         if (prod) {
           const stock1 = prod.stockLoja1 ?? prod.stock ?? 0;
           const stock2 = prod.stockLoja2 ?? 0;
-          const cleanDesc = (prod.description || '').replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+          const cleanDesc = (prod.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
           const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
 
           const { error } = await supabase.from('products').upsert({
@@ -738,7 +738,7 @@ export async function runBackgroundSync() {
             if (prod) {
               const stock1 = prod.stockLoja1 ?? prod.stock ?? 0;
               const stock2 = prod.stockLoja2 ?? 0;
-              const cleanDesc = (prod.description || '').replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+              const cleanDesc = (prod.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
               const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
 
               await supabase.from('products').update({
