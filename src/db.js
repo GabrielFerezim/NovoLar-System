@@ -22,7 +22,8 @@ const initialMockData = {
   sales: [],
   expenses: [],
   closures: [], // Fechamentos de caixa
-  syncQueue: [] // Fila de sincronização offline
+  syncQueue: [], // Fila de sincronização offline
+  creditAccounts: [] // Contas a receber (fiados/marcados)
 };
 
 // --- CONTROLE DE ID DA LOJA ---
@@ -82,6 +83,10 @@ export async function loadDB() {
     dbData.closures = [];
     migrated = true;
   }
+  if (!dbData.creditAccounts) {
+    dbData.creditAccounts = [];
+    migrated = true;
+  }
 
   if (migrated) {
     await saveDB(dbData);
@@ -134,13 +139,18 @@ export async function saveProduct(product) {
   
   await saveDB(db);
 
+  const stock1 = targetProduct.stockLoja1 ?? targetProduct.stock ?? 0;
+  const stock2 = targetProduct.stockLoja2 ?? 0;
+  const cleanDesc = (targetProduct.description || '').replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+  const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
+
   // Tentar enviar para a nuvem de forma assíncrona
   try {
     const { error } = await supabase.from('products').upsert({
       id: targetProduct.id,
       code: targetProduct.code,
       name: targetProduct.name,
-      description: targetProduct.description,
+      description: supabaseDesc,
       cost_price: targetProduct.costPrice,
       sale_price: targetProduct.salePrice,
       stock: targetProduct.stock,
@@ -180,7 +190,7 @@ export async function getSales() {
   return db.sales || [];
 }
 
-export async function registerSale(saleItems, paymentMethod, deliveryDetails = null) {
+export async function registerSale(saleItems, paymentMethod, deliveryDetails = null, discount = 0) {
   const db = await loadDB();
   if (!db.sales) db.sales = [];
   if (!db.products) db.products = [];
@@ -209,13 +219,15 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
     };
   });
 
+  const finalTotalPrice = Math.max(0, totalPrice - discount);
+
   const newSale = {
     id: `V-${Date.now().toString().slice(-4)}`,
     timestamp: new Date().toISOString(),
     items: saleProducts,
-    totalPrice: parseFloat(totalPrice.toFixed(2)),
+    totalPrice: parseFloat(finalTotalPrice.toFixed(2)),
     totalCost: parseFloat(totalCost.toFixed(2)),
-    profit: parseFloat((totalPrice - totalCost).toFixed(2)),
+    profit: parseFloat((finalTotalPrice - totalCost).toFixed(2)),
     paymentMethod,
     storeId: getStoreId(),
     deliveryDetails,
@@ -383,14 +395,29 @@ export async function runBackgroundSync() {
         
         cloudProducts.forEach(cp => {
           const idx = merged.findIndex(p => p.id === cp.id);
+          
+          const rawDesc = cp.description || '';
+          const match = rawDesc.match(/\s\[STOCKS:(\d+)\|(\d+)\]$/);
+          let stockLoja1 = parseFloat(cp.stock) || 0;
+          let stockLoja2 = 0;
+          let cleanDescription = rawDesc;
+          
+          if (match) {
+            stockLoja1 = parseInt(match[1]) || 0;
+            stockLoja2 = parseInt(match[2]) || 0;
+            cleanDescription = rawDesc.replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+          }
+
           const cpTransformed = {
             id: cp.id,
             code: cp.code,
             name: cp.name,
-            description: cp.description,
+            description: cleanDescription,
             costPrice: parseFloat(cp.cost_price),
             salePrice: parseFloat(cp.sale_price),
-            stock: cp.stock,
+            stockLoja1,
+            stockLoja2,
+            stock: stockLoja1 + stockLoja2,
             minStock: cp.min_stock,
             category: cp.category,
             unit: cp.unit
@@ -425,11 +452,16 @@ export async function runBackgroundSync() {
       if (job.type === 'product') {
         const prod = db.products.find(p => p.id === job.recordId);
         if (prod) {
+          const stock1 = prod.stockLoja1 ?? prod.stock ?? 0;
+          const stock2 = prod.stockLoja2 ?? 0;
+          const cleanDesc = (prod.description || '').replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+          const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
+
           const { error } = await supabase.from('products').upsert({
             id: prod.id,
             code: prod.code,
             name: prod.name,
-            description: prod.description,
+            description: supabaseDesc,
             cost_price: prod.costPrice,
             sale_price: prod.salePrice,
             stock: prod.stock,
@@ -561,7 +593,7 @@ export async function saveClosure(closureData) {
 
 export async function getPendingClosures(storeId) {
   const db = await loadDB();
-  const sales = db.sales ? db.sales.filter(s => s.storeId === storeId) : [];
+  const sales = db.sales ? db.sales.filter(s => s.storeId === storeId && s.paymentMethod !== 'Fiado') : [];
   const expenses = db.expenses ? db.expenses.filter(e => e.storeId === storeId) : [];
   const closures = db.closures ? db.closures.filter(c => c.storeId === storeId) : [];
 
@@ -594,4 +626,75 @@ export async function getPendingClosures(storeId) {
   });
 
   return pendingDates.sort(); // Retorna as datas pendentes ordenadas
+}
+
+// ================== GESTÃO DE FIADOS / MARCADOS ==================
+
+export async function getCreditAccounts() {
+  const db = await loadDB();
+  return db.creditAccounts || [];
+}
+
+export async function saveCreditAccount(account) {
+  const db = await loadDB();
+  if (!db.creditAccounts) db.creditAccounts = [];
+
+  let targetAccount;
+  if (account.id) {
+    const idx = db.creditAccounts.findIndex(a => a.id === account.id);
+    if (idx !== -1) {
+      db.creditAccounts[idx] = { ...db.creditAccounts[idx], ...account };
+      targetAccount = db.creditAccounts[idx];
+    }
+  } else {
+    targetAccount = {
+      ...account,
+      id: Date.now().toString(),
+      balance: 0,
+      history: []
+    };
+    db.creditAccounts.push(targetAccount);
+  }
+
+  await saveDB(db);
+  // Futuramente, pode sincronizar com Supabase aqui
+  return db.creditAccounts;
+}
+
+export async function addCreditTransaction(accountId, type, amount, description, saleId = null, items = null, deliveryDetails = null, dueDate = null, paymentMethod = null) {
+  const db = await loadDB();
+  if (!db.creditAccounts) return false;
+
+  const idx = db.creditAccounts.findIndex(a => a.id === accountId);
+  if (idx === -1) return false;
+
+  const account = db.creditAccounts[idx];
+  
+  const transaction = {
+    id: Date.now().toString(),
+    timestamp: new Date().toISOString(),
+    type, // 'charge' (compras) ou 'payment' (pagamentos)
+    amount: parseFloat(amount),
+    description,
+    saleId,
+    items,
+    deliveryDetails,
+    dueDate,
+    paymentMethod
+  };
+
+  if (!account.history) account.history = [];
+  account.history.push(transaction);
+
+  if (type === 'charge') {
+    account.balance = (account.balance || 0) + transaction.amount;
+  } else if (type === 'payment') {
+    account.balance = (account.balance || 0) - transaction.amount;
+    // Opcional: registrar como uma entrada de caixa 'Dinheiro' ou outro se necessário,
+    // mas por enquanto controlaremos no fiado.
+  }
+
+  db.creditAccounts[idx] = account;
+  await saveDB(db);
+  return db.creditAccounts;
 }

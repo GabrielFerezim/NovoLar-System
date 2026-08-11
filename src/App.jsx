@@ -1,21 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  LayoutDashboard, 
-  ShoppingBag, 
-  Package, 
-  History, 
-  DollarSign, 
-  TrendingUp, 
-  AlertTriangle, 
-  Barcode, 
-  Plus, 
-  Search, 
-  Trash2, 
-  Edit3, 
-  Check, 
-  X, 
-  CreditCard, 
-  Coins, 
+import {
+  LayoutDashboard,
+  ShoppingBag,
+  Package,
+  History,
+  DollarSign,
+  TrendingUp,
+  AlertTriangle,
+  Barcode,
+  Plus,
+  Search,
+  Trash2,
+  Edit3,
+  Check,
+  X,
+  CreditCard,
+  Coins,
   Smartphone,
   Info,
   Calendar,
@@ -30,16 +30,19 @@ import {
   Menu,
   Truck,
   FileText,
-  Bell
+  Bell,
+  Users,
+  BookOpen,
+  ArrowRightLeft
 } from 'lucide-react';
-import { 
-  getProducts, 
-  saveProduct, 
-  deleteProduct, 
-  getSales, 
-  registerSale, 
-  getExpenses, 
-  saveExpense, 
+import {
+  getProducts,
+  saveProduct,
+  deleteProduct,
+  getSales,
+  registerSale,
+  getExpenses,
+  saveExpense,
   deleteExpense,
   loadDB,
   saveDB,
@@ -48,15 +51,28 @@ import {
   runBackgroundSync,
   updateSaleDeliveryStatus,
   getPendingClosures,
-  saveClosure
+  saveClosure,
+  getCreditAccounts,
+  saveCreditAccount,
+  addCreditTransaction
 } from './db';
 import { supabase } from './supabase';
+import { FiadoCheckoutModal, CreditAccountsView } from './FiadoComponents';
+
+export const getProductStock = (product) => {
+  const store = getStoreId();
+  if (store === 'loja-1') {
+    return product.stockLoja1 ?? product.stock ?? 0;
+  }
+  return product.stockLoja2 ?? 0;
+};
 
 export default function App() {
   // Estado Global do Banco de Dados
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
   const [expenses, setExpenses] = useState([]);
+  const [creditAccounts, setCreditAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Controle de Sessão de Login
@@ -94,20 +110,20 @@ export default function App() {
   // Função para calcular o saldo de caixa acumulado antes de uma data específica
   const getCashBalanceAtDate = (dateString) => {
     const targetDate = new Date(dateString + 'T00:00:00');
-    
+
     const priorSales = filteredSales.filter(s => {
       const saleDate = new Date(s.timestamp.split('T')[0] + 'T00:00:00');
       return saleDate < targetDate;
     });
-    
+
     const priorExpenses = filteredExpenses.filter(e => {
       const expDate = new Date(e.timestamp.split('T')[0] + 'T00:00:00');
       return expDate < targetDate;
     });
-    
+
     const totalPriorSales = priorSales.reduce((sum, s) => sum + s.totalPrice, 0);
     const totalPriorExpenses = priorExpenses.reduce((sum, e) => sum + e.amount, 0);
-    
+
     return totalPriorSales - totalPriorExpenses;
   };
 
@@ -178,7 +194,7 @@ export default function App() {
     };
     fileReader.readAsText(file);
   };
-  
+
   // Status do Scanner Global
   const [scannerActive, setScannerActive] = useState(true);
   const [lastScannedCode, setLastScannedCode] = useState('');
@@ -187,6 +203,7 @@ export default function App() {
   // Estados de Modais
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [transferProduct, setTransferProduct] = useState(null);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
   const [closureModalOpen, setClosureModalOpen] = useState(false);
   const [closureTargetDate, setClosureTargetDate] = useState(null);
@@ -201,8 +218,9 @@ export default function App() {
       setProducts(db.products || []);
       setSales(db.sales || []);
       setExpenses(db.expenses || []);
+      setCreditAccounts(db.creditAccounts || []);
       setSyncPendingCount(db.syncQueue ? db.syncQueue.length : 0);
-      
+
       const pendings = await getPendingClosures(getStoreId());
       setPendingClosures(pendings);
     } catch (error) {
@@ -222,6 +240,7 @@ export default function App() {
       if (res.status === 'success' || res.status === 'syncing') {
         setSyncStatus('Sincronizado');
         setProducts(db.products || []);
+        setCreditAccounts(db.creditAccounts || []);
       } else if (res.status === 'error') {
         setSyncStatus(res.message);
       } else {
@@ -280,7 +299,7 @@ export default function App() {
       // Adiciona números ao buffer
       if (/^[0-9]$/.test(e.key)) {
         buffer += e.key;
-      } 
+      }
       // Ao terminar o sinal de bip, a maioria dos leitores envia "Enter"
       else if (e.key === 'Enter') {
         if (buffer.length >= 4) {
@@ -298,21 +317,22 @@ export default function App() {
   // Processa o produto bipado
   const handleBarcodeScanned = (barcode) => {
     setLastScannedCode(barcode);
-    
+
     // Procura o produto pelo código de barras
     const foundProduct = products.find(p => p.code === barcode);
-    
+
     if (foundProduct) {
-      if (foundProduct.stock <= 0) {
-        showScanNotification(`Produto '${foundProduct.name}' está sem estoque!`, 'error');
+      const currentStock = getProductStock(foundProduct);
+      if (currentStock <= 0) {
+        showScanNotification(`Produto '${foundProduct.name}' está sem estoque nesta loja!`, 'error');
         return;
       }
-      
+
       // Adiciona o produto ao carrinho do PDV
       // Se não estiver na aba do PDV, opcionalmente avisa ou muda de aba
       addToCartFromScan(foundProduct);
       showScanNotification(`Bipado: ${foundProduct.name} (R$ ${foundProduct.salePrice.toFixed(2)})`, 'success');
-      
+
       // Se estiver em outra aba, avisa o usuário
       if (activeTab !== 'pdv') {
         setActiveTab('pdv');
@@ -326,17 +346,20 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState('Pix');
   const [amountPaid, setAmountPaid] = useState('');
+  const [discount, setDiscount] = useState(0);
+  const [checkoutInstallments, setCheckoutInstallments] = useState('1x');
 
   const addToCartFromScan = (product) => {
+    const currentStock = getProductStock(product);
     setCart(prevCart => {
       const existingItem = prevCart.find(item => item.id === product.id);
       if (existingItem) {
         // Verifica limite de estoque
-        if (existingItem.quantity >= product.stock) {
-          showScanNotification(`Estoque máximo atingido para ${product.name}`, 'error');
+        if (existingItem.quantity >= currentStock) {
+          showScanNotification(`Estoque máximo atingido para ${product.name} nesta loja`, 'error');
           return prevCart;
         }
-        return prevCart.map(item => 
+        return prevCart.map(item =>
           item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         );
       } else {
@@ -367,15 +390,88 @@ export default function App() {
     setCart(prevCart => prevCart.filter(item => item.id !== productId));
   };
 
-  const handleCheckout = async (deliveryDetails = null) => {
+  const [showFiadoModal, setShowFiadoModal] = useState(false);
+  const [pendingDeliveryDetails, setPendingDeliveryDetails] = useState(null);
+
+  const handleFiadoCheckout = async (accountId, dueDate = null) => {
+    setShowFiadoModal(false);
     if (cart.length === 0) return;
-    
+
     try {
       const saleItems = [...cart];
-      const salePayment = paymentMethod;
+      const saleTotal = Math.max(0, saleItems.reduce((acc, item) => acc + item.salePrice * item.quantity, 0) - discount);
+
+      const res = await registerSale(cart, 'Fiado', pendingDeliveryDetails, discount);
+
+      const saleId = res.sales.length > 0 ? res.sales[res.sales.length - 1].id : '001';
+      const updatedAccounts = await addCreditTransaction(
+        accountId,
+        'charge',
+        saleTotal,
+        'Compra Marcada (Fiado)',
+        saleId,
+        saleItems,
+        pendingDeliveryDetails,
+        dueDate
+      );
+
+      setProducts(res.products);
+      setSales(res.sales);
+      if (updatedAccounts) setCreditAccounts(updatedAccounts);
+
+      setLastSaleReceipt({
+        id: saleId,
+        items: saleItems,
+        paymentMethod: 'Fiado',
+        amountPaid: 0,
+        discount: discount,
+        timestamp: new Date().toISOString(),
+        deliveryDetails: pendingDeliveryDetails
+      });
+
+      setCart([]);
+      setAmountPaid('');
+      setDiscount(0);
+      setCheckoutInstallments('1x');
+      setPendingDeliveryDetails(null);
+      showScanNotification("Venda Fiado concluída!", "success");
+    } catch (error) {
+      console.error("Erro no Fiado:", error);
+      showScanNotification("Erro ao registrar fiado.", "error");
+    }
+  };
+
+  const handleCreateCreditAccount = async (accountData) => {
+    try {
+      const updated = await saveCreditAccount(accountData);
+      setCreditAccounts(updated);
+      showScanNotification("Conta criada com sucesso!", "success");
+    } catch (e) {
+      console.error("Erro ao criar conta fiado:", e);
+      showScanNotification("Erro ao criar conta.", "error");
+    }
+  };
+
+  const handleCheckout = async (deliveryDetails = null) => {
+    if (cart.length === 0) return;
+
+    if (paymentMethod === 'Fiado') {
+      setPendingDeliveryDetails(deliveryDetails);
+      setShowFiadoModal(true);
+      return;
+    }
+
+    try {
+      const saleItems = [...cart];
+      let salePayment = paymentMethod;
+      if (paymentMethod === 'Crédito') {
+        salePayment = `Cartão Crédito (${checkoutInstallments})`;
+      } else if (paymentMethod === 'Débito') {
+        salePayment = 'Cartão Débito';
+      }
       const salePaid = parseFloat(amountPaid.replace(',', '.')) || 0;
 
-      const res = await registerSale(cart, paymentMethod, deliveryDetails);
+      const res = await registerSale(cart, salePayment, deliveryDetails, discount);
       setProducts(res.products);
       setSales(res.sales);
 
@@ -386,12 +482,15 @@ export default function App() {
         items: saleItems,
         paymentMethod: salePayment,
         amountPaid: salePaid,
+        discount: discount,
         timestamp: new Date().toISOString(),
         deliveryDetails
       });
 
       setCart([]);
       setAmountPaid('');
+      setDiscount(0);
+      setCheckoutInstallments('1x');
       showScanNotification("Venda finalizada com sucesso!", "success");
     } catch (error) {
       console.error("Erro ao finalizar venda:", error);
@@ -435,6 +534,36 @@ export default function App() {
         console.error(e);
         showScanNotification("Erro ao excluir produto.", "error");
       }
+    }
+  };
+
+  const handleTransferStock = async (productId, fromStore, toStore, amount) => {
+    try {
+      const db = await loadDB();
+      const idx = db.products.findIndex(p => p.id === productId);
+      if (idx !== -1) {
+        const prod = db.products[idx];
+        prod.stockLoja1 = prod.stockLoja1 ?? prod.stock ?? 0;
+        prod.stockLoja2 = prod.stockLoja2 ?? 0;
+
+        if (fromStore === 'loja-1') {
+          prod.stockLoja1 = Math.max(0, prod.stockLoja1 - amount);
+          prod.stockLoja2 = prod.stockLoja2 + amount;
+        } else {
+          prod.stockLoja2 = Math.max(0, prod.stockLoja2 - amount);
+          prod.stockLoja1 = prod.stockLoja1 + amount;
+        }
+
+        prod.stock = prod.stockLoja1 + prod.stockLoja2;
+
+        const updatedProducts = await saveProduct(prod);
+        setProducts(updatedProducts);
+        setTransferProduct(null);
+        showScanNotification("Estoque transferido com sucesso!", "success");
+      }
+    } catch (e) {
+      console.error(e);
+      showScanNotification("Erro ao transferir estoque.", "error");
     }
   };
 
@@ -484,19 +613,19 @@ export default function App() {
   }
 
   // Estatísticas e KPI Computados (filtrados por loja logada)
-  const filteredSales = sales.filter(s => s.storeId === storeId);
+  const filteredSales = sales.filter(s => s.storeId === storeId && s.paymentMethod !== 'Fiado');
   const filteredExpenses = expenses.filter(e => e.storeId === storeId);
-  
+
   // =====================================
   // GERAÇÃO DE NOTIFICAÇÕES (Dropdown)
   // =====================================
   const notifications = [];
-  
+
   // Datas base para cálculo
   const todayDateObj = new Date();
   const todayOffset = todayDateObj.getTimezoneOffset() * 60000;
   const todayStr = new Date(todayDateObj.getTime() - todayOffset).toISOString().split('T')[0];
-  
+
   const tomorrowDateObj = new Date(todayDateObj);
   tomorrowDateObj.setDate(tomorrowDateObj.getDate() + 1);
   const tomorrowStr = new Date(tomorrowDateObj.getTime() - (tomorrowDateObj.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
@@ -519,7 +648,7 @@ export default function App() {
 
   // 2. Notificações de Entregas Pendentes
   sales.filter(s => s.storeId === storeId).forEach(sale => {
-    if (sale.deliveryDetails && sale.deliveryDetails.requiresDelivery && sale.deliveryDetails.status !== 'delivered') {
+    if (sale.deliveryDetails && sale.deliveryDetails.requiresDelivery && sale.deliveryDetails.status !== 'delivered' && sale.deliveryDetails.status !== 'Entregue') {
       const delDate = sale.deliveryDetails.date;
       if (delDate === todayStr) {
         notifications.push({
@@ -561,11 +690,36 @@ export default function App() {
     }
   });
 
+  // 3. Notificações de Fiados Atrasados
+  creditAccounts.forEach(account => {
+    if (!account.history || account.balance <= 0) return;
+
+    const charges = account.history.filter(t => t.type === 'charge' && t.dueDate);
+    if (charges.length === 0) return;
+
+    const sortedCharges = charges.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    const oldestDue = sortedCharges[0].dueDate;
+
+    if (oldestDue && oldestDue < todayStr) {
+      notifications.push({
+        id: `fiado-late-${account.id}`,
+        type: 'fiado_late',
+        icon: <AlertTriangle size={18} style={{ color: 'var(--danger)' }} />,
+        title: 'Fiado Atrasado!',
+        message: `${account.name} possui débito vencido desde ${oldestDue.split('-').reverse().join('/')} (Saldo: R$ ${account.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}).`,
+        onClick: () => {
+          setActiveTab('credit-accounts');
+          setIsNotificationsOpen(false);
+        }
+      });
+    }
+  });
+
   const totalSalesValue = filteredSales.reduce((sum, s) => sum + s.totalPrice, 0);
   const totalProfitValue = filteredSales.reduce((sum, s) => sum + s.profit, 0);
   const totalExpensesValue = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
   const netCash = totalSalesValue - totalExpensesValue;
-  const lowStockCount = products.filter(p => p.stock <= p.minStock).length;
+  const lowStockCount = products.filter(p => getProductStock(p) <= p.minStock).length;
 
   const handleClosure = async (closureData) => {
     try {
@@ -585,8 +739,8 @@ export default function App() {
     <div className="app-container">
       {/* Backdrop do menu mobile */}
       {isMobileMenuOpen && (
-        <div 
-          className="sidebar-backdrop" 
+        <div
+          className="sidebar-backdrop"
           onClick={() => setIsMobileMenuOpen(false)}
           style={{
             position: 'fixed',
@@ -609,7 +763,7 @@ export default function App() {
 
         <nav className="sidebar-menu">
           <li>
-            <button 
+            <button
               className={`menu-item-btn ${activeTab === 'pdv' ? 'active' : ''}`}
               onClick={() => { setActiveTab('pdv'); setIsMobileMenuOpen(false); }}
             >
@@ -618,7 +772,7 @@ export default function App() {
             </button>
           </li>
           <li>
-            <button 
+            <button
               className={`menu-item-btn ${activeTab === 'daily-data' ? 'active' : ''}`}
               onClick={() => { setActiveTab('daily-data'); setIsMobileMenuOpen(false); }}
             >
@@ -627,7 +781,7 @@ export default function App() {
             </button>
           </li>
           <li>
-            <button 
+            <button
               className={`menu-item-btn ${activeTab === 'calendar' ? 'active' : ''}`}
               onClick={() => { setActiveTab('calendar'); setIsMobileMenuOpen(false); }}
             >
@@ -636,7 +790,16 @@ export default function App() {
             </button>
           </li>
           <li>
-            <button 
+            <button
+              className={`menu-item-btn ${activeTab === 'credit-accounts' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('credit-accounts'); setIsMobileMenuOpen(false); }}
+            >
+              <BookOpen size={20} />
+              Contas Marcadas (Fiado)
+            </button>
+          </li>
+          <li>
+            <button
               className={`menu-item-btn ${activeTab.startsWith('admin') ? 'active' : ''}`}
               onClick={() => setIsAdminMenuOpen(!isAdminMenuOpen)}
               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}
@@ -647,11 +810,11 @@ export default function App() {
               </div>
               <span style={{ fontSize: '10px', transform: isAdminMenuOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
             </button>
-            
+
             {isAdminMenuOpen && (
               <ul className="sidebar-submenu" style={{ listStyle: 'none', paddingLeft: '16px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <li>
-                  <button 
+                  <button
                     className={`submenu-item-btn ${activeTab === 'admin-products' ? 'active' : ''}`}
                     onClick={() => { setActiveTab('admin-products'); setIsMobileMenuOpen(false); }}
                   >
@@ -660,7 +823,7 @@ export default function App() {
                   </button>
                 </li>
                 <li>
-                  <button 
+                  <button
                     className={`submenu-item-btn ${activeTab === 'admin-finance' ? 'active' : ''}`}
                     onClick={() => { setActiveTab('admin-finance'); setIsMobileMenuOpen(false); }}
                   >
@@ -669,7 +832,7 @@ export default function App() {
                   </button>
                 </li>
                 <li>
-                  <button 
+                  <button
                     className={`submenu-item-btn ${activeTab === 'admin-insights' ? 'active' : ''}`}
                     onClick={() => { setActiveTab('admin-insights'); setIsMobileMenuOpen(false); }}
                   >
@@ -678,7 +841,7 @@ export default function App() {
                   </button>
                 </li>
                 <li>
-                  <button 
+                  <button
                     className={`submenu-item-btn ${activeTab === 'admin-deliveries' ? 'active' : ''}`}
                     onClick={() => { setActiveTab('admin-deliveries'); setIsMobileMenuOpen(false); }}
                   >
@@ -704,16 +867,16 @@ export default function App() {
                 Sincronismo: <strong>{syncStatus}</strong>
               </div>
             </div>
-            
+
             {/* Terminal Logado e Botão de Logout */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '0 2px' }}>
               <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)' }}>Terminal Logado:</div>
-              <div style={{ 
-                padding: '6px 10px', 
-                fontSize: '13px', 
+              <div style={{
+                padding: '6px 10px',
+                fontSize: '13px',
                 fontWeight: '700',
-                backgroundColor: 'var(--bg-tertiary)', 
-                border: '1px solid var(--border-color)', 
+                backgroundColor: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-color)',
                 borderRadius: 'var(--radius-sm)',
                 color: 'var(--primary)',
                 display: 'flex',
@@ -723,11 +886,11 @@ export default function App() {
                 <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--primary)' }}></div>
                 {storeId === 'loja-1' ? 'Loja 1 - Matriz' : 'Loja 2 - Filial'}
               </div>
-              <button 
+              <button
                 onClick={handleLogout}
-                style={{ 
-                  padding: '8px 12px', 
-                  fontSize: '12px', 
+                style={{
+                  padding: '8px 12px',
+                  fontSize: '12px',
                   fontWeight: '600',
                   color: 'var(--danger)',
                   backgroundColor: 'var(--danger-glow)',
@@ -757,8 +920,8 @@ export default function App() {
         {/* Top Header */}
         <header className="top-header" style={{ display: 'flex', alignItems: 'center' }}>
           {/* Botão Hambúrguer Mobile */}
-          <button 
-            type="button" 
+          <button
+            type="button"
             className="mobile-menu-toggle"
             onClick={() => setIsMobileMenuOpen(true)}
             style={{
@@ -783,6 +946,7 @@ export default function App() {
               {activeTab === 'pdv' && 'Frente de Caixa / Checkout'}
               {activeTab === 'admin-insights' && 'Insights Comerciais (IA)'}
               {activeTab === 'admin-products' && 'Administração: Produtos & Estoque'}
+              {activeTab === 'credit-accounts' && 'Gestão de Contas (Fiados)'}
               {activeTab === 'admin-finance' && 'Administração: Controle Geral & Rede'}
               {activeTab === 'admin-deliveries' && 'Administração: Controle de Entregas'}
             </h1>
@@ -791,7 +955,8 @@ export default function App() {
               {activeTab === 'calendar' && 'Selecione qualquer data no calendário para extrair relatórios históricos'}
               {activeTab === 'pdv' && 'Adicione produtos bipando ou digitando o código de barras'}
               {activeTab === 'admin-insights' && 'Análise de vendas, priorização de compras por lucro e diagnóstico de mercado'}
-              {activeTab === 'admin-products' && 'Cadastre, edite e gerencie o estoque mínimo dos produtos'}
+              {activeTab === 'admin-products' && 'Cadastrar, edite e gerencie o estoque mínimo dos produtos'}
+              {activeTab === 'credit-accounts' && 'Acompanhe as dívidas e pagamentos dos seus clientes de confiança'}
               {activeTab === 'admin-finance' && 'Controle financeiro consolidado de faturamento, lucros, gráficos e rede ao vivo'}
               {activeTab === 'admin-deliveries' && 'Painel de expedição de pedidos para entrega física e geração de Notas Fiscais'}
             </span>
@@ -800,7 +965,7 @@ export default function App() {
           <div className="header-actions">
             {/* Sino de Notificações (Dropdown) */}
             <div style={{ position: 'relative' }}>
-              <div 
+              <div
                 style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px' }}
                 onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
                 title={notifications.length > 0 ? `Existem ${notifications.length} nova(s) notificação(ões)` : 'Sem notificações'}
@@ -834,16 +999,16 @@ export default function App() {
                     Notificações
                     <span style={{ fontSize: '11px', backgroundColor: 'var(--primary)', color: '#fff', padding: '2px 8px', borderRadius: '12px' }}>{notifications.length} Novas</span>
                   </div>
-                  
+
                   <div style={{ maxHeight: '350px', overflowY: 'auto' }}>
                     {notifications.length === 0 ? (
                       <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
                         <CheckCircle size={32} style={{ color: 'var(--success)', opacity: 0.5, margin: '0 auto 8px auto' }} />
-                        <br/>Tudo tranquilo por aqui!<br/>Nenhuma notificação pendente.
+                        <br />Tudo tranquilo por aqui!<br />Nenhuma notificação pendente.
                       </div>
                     ) : (
                       notifications.map(notif => (
-                        <div 
+                        <div
                           key={notif.id}
                           onClick={notif.onClick}
                           style={{
@@ -876,7 +1041,7 @@ export default function App() {
               <Barcode size={16} />
               <span>{scannerActive ? 'Leitor Pronto' : 'Leitor Inativo'}</span>
             </div>
-            
+
             {(activeTab === 'admin-products' || activeTab === 'products') && (
               <button className="btn-primary" style={{ padding: '10px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => { setEditingProduct(null); setProductModalOpen(true); }}>
                 <Plus size={16} /> <span className="btn-text-responsive">Cadastrar Produto</span>
@@ -888,11 +1053,11 @@ export default function App() {
                 <Plus size={16} /> <span className="btn-text-responsive">Registrar Despesa</span>
               </button>
             )}
-            
+
             {(activeTab === 'daily-data' || activeTab === 'pdv') && (
-              <button 
-                className="btn-primary" 
-                style={{ padding: '10px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--brand-yellow)', color: '#000' }} 
+              <button
+                className="btn-primary"
+                style={{ padding: '10px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--brand-yellow)', color: '#000' }}
                 onClick={() => {
                   const d = new Date();
                   const offset = d.getTimezoneOffset() * 60000;
@@ -934,7 +1099,7 @@ export default function App() {
         {/* Renderização Condicional de Telas */}
         <div className="page-container">
           {activeTab === 'daily-data' && (
-            <DailyDashboardView 
+            <DailyDashboardView
               sales={filteredSales}
               expenses={filteredExpenses}
               products={products}
@@ -945,8 +1110,8 @@ export default function App() {
           )}
 
           {activeTab === 'pdv' && (
-            <PDVView 
-              products={products} 
+            <PDVView
+              products={products}
               cart={cart}
               paymentMethod={paymentMethod}
               setPaymentMethod={setPaymentMethod}
@@ -962,11 +1127,15 @@ export default function App() {
               }}
               currentCashBalance={netCash}
               onAddToCart={addToCartFromScan}
+              discount={discount}
+              setDiscount={setDiscount}
+              checkoutInstallments={checkoutInstallments}
+              setCheckoutInstallments={setCheckoutInstallments}
             />
           )}
 
           {activeTab === 'calendar' && (
-            <CalendarReportsView 
+            <CalendarReportsView
               sales={filteredSales}
               expenses={filteredExpenses}
               getCashBalanceAtDate={getCashBalanceAtDate}
@@ -974,24 +1143,83 @@ export default function App() {
           )}
 
           {activeTab === 'admin-insights' && (
-            <AIAssistantView 
+            <AIAssistantView
               products={products}
               sales={filteredSales}
               expenses={filteredExpenses}
             />
           )}
 
+          {activeTab === 'credit-accounts' && (
+            <CreditAccountsView
+              creditAccounts={creditAccounts}
+              onCreateAccount={async (acc) => {
+                const updated = await saveCreditAccount(acc);
+                setCreditAccounts(updated);
+              }}
+              onAddTransaction={async (accountId, type, amount, description, paymentMethod = 'Dinheiro') => {
+                let saleId = null;
+                let fakeItems = null;
+
+                if (type === 'payment') {
+                  const client = creditAccounts.find(a => a.id === accountId);
+                  const clientName = client ? client.name : 'Cliente';
+                  fakeItems = [{
+                    id: `rec-${Date.now()}`,
+                    name: `Recebimento Fiado - ${clientName}`,
+                    quantity: 1,
+                    salePrice: amount,
+                    costPrice: 0
+                  }];
+                  const res = await registerSale(fakeItems, paymentMethod, null);
+                  setProducts(res.products);
+                  setSales(res.sales);
+
+                  saleId = res.sales.length > 0 ? res.sales[res.sales.length - 1].id : `R-${Date.now().toString().slice(-4)}`;
+
+                  // Abrir cupom fiscal na tela para impressão do pagamento
+                  setLastSaleReceipt({
+                    id: saleId,
+                    items: fakeItems,
+                    paymentMethod: paymentMethod,
+                    amountPaid: paymentMethod === 'Dinheiro' ? amount : 0,
+                    timestamp: new Date().toISOString(),
+                    deliveryDetails: null
+                  });
+                }
+
+                const updated = await addCreditTransaction(
+                  accountId,
+                  type,
+                  amount,
+                  description,
+                  saleId,
+                  fakeItems,
+                  null,
+                  null,
+                  paymentMethod
+                );
+
+                if (updated) {
+                  setCreditAccounts(updated);
+                }
+              }}
+              onViewReceipt={(receipt) => setLastSaleReceipt(receipt)}
+            />
+          )}
+
           {activeTab === 'admin-products' && (
-            <ProductsView 
-              products={products} 
+            <ProductsView
+              products={products}
               onEditProduct={(p) => { setEditingProduct(p); setProductModalOpen(true); }}
               onDeleteProduct={handleDeleteProduct}
+              onTransferStock={(p) => setTransferProduct(p)}
             />
           )}
 
           {activeTab === 'admin-finance' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              <DashboardView 
+              <DashboardView
                 products={products}
                 sales={filteredSales}
                 expenses={filteredExpenses}
@@ -1005,7 +1233,7 @@ export default function App() {
                 onExportBackup={handleExportBackup}
                 onImportBackup={handleImportBackup}
               />
-              <HistoryExpensesView 
+              <HistoryExpensesView
                 sales={filteredSales}
                 expenses={filteredExpenses}
                 onDeleteExpense={handleDeleteExpense}
@@ -1014,7 +1242,7 @@ export default function App() {
           )}
 
           {activeTab === 'admin-deliveries' && (
-            <DeliveriesView 
+            <DeliveriesView
               sales={sales}
               onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
               onGenerateInvoice={(sale) => {
@@ -1028,16 +1256,25 @@ export default function App() {
 
       {/* MODAL DE CADASTRO/EDIÇÃO DE PRODUTO */}
       {productModalOpen && (
-        <ProductModal 
-          product={editingProduct} 
+        <ProductModal
+          product={editingProduct}
           onClose={() => { setProductModalOpen(false); setEditingProduct(null); }}
           onSave={handleSaveProduct}
         />
       )}
 
+      {/* MODAL DE TRANSFERÊNCIA DE ESTOQUE */}
+      {transferProduct && (
+        <TransferStockModal
+          product={transferProduct}
+          onClose={() => setTransferProduct(null)}
+          onConfirm={handleTransferStock}
+        />
+      )}
+
       {/* MODAL DE CADASTRO DE DESPESA */}
       {expenseModalOpen && (
-        <ExpenseModal 
+        <ExpenseModal
           onClose={() => setExpenseModalOpen(false)}
           onSave={handleSaveExpense}
         />
@@ -1045,15 +1282,25 @@ export default function App() {
 
       {/* MODAL DE RECIBO DE VENDA */}
       {lastSaleReceipt && (
-        <ReceiptModal 
+        <ReceiptModal
           receipt={lastSaleReceipt}
           onClose={() => setLastSaleReceipt(null)}
         />
       )}
 
+      {/* MODAL DE CHECKOUT FIADO */}
+      {showFiadoModal && (
+        <FiadoCheckoutModal
+          creditAccounts={creditAccounts}
+          onConfirm={handleFiadoCheckout}
+          onClose={() => setShowFiadoModal(false)}
+          onCreateAccount={handleCreateCreditAccount}
+        />
+      )}
+
       {/* MODAL DE NOTA FISCAL (DANFE SIMPLIFICADA) */}
       {invoiceModalOpen && selectedInvoiceSale && (
-        <InvoiceModal 
+        <InvoiceModal
           sale={selectedInvoiceSale}
           onClose={() => { setInvoiceModalOpen(false); setSelectedInvoiceSale(null); }}
         />
@@ -1061,9 +1308,9 @@ export default function App() {
 
       {/* MODAL DE FECHAMENTO DE CAIXA */}
       {closureModalOpen && !pendingClosures.length && (
-        <ClosureModal 
+        <ClosureModal
           date={closureTargetDate}
-          sales={sales}
+          sales={sales.filter(s => s.paymentMethod !== 'Fiado')}
           expenses={expenses}
           storeId={storeId}
           onClose={() => { setClosureModalOpen(false); setClosureTargetDate(null); }}
@@ -1077,14 +1324,14 @@ export default function App() {
 // ==========================================
 // 1. TELA: DASHBOARD VIEW
 // ==========================================
-function DashboardView({ 
-  products, 
-  sales, 
-  expenses, 
-  totalSales, 
-  totalProfit, 
-  totalExpenses, 
-  netCash, 
+function DashboardView({
+  products,
+  sales,
+  expenses,
+  totalSales,
+  totalProfit,
+  totalExpenses,
+  netCash,
   lowStockCount,
   onSimulateScan,
   onChangeTab,
@@ -1138,10 +1385,10 @@ function DashboardView({
     }
   }, [viewMode]);
 
-  const activeSales = viewMode === 'consolidated' 
+  const activeSales = viewMode === 'consolidated'
     ? (cloudStoreFilter === 'all' ? cloudSales : cloudSales.filter(s => s.storeId === cloudStoreFilter))
     : sales;
-  const activeExpenses = viewMode === 'consolidated' 
+  const activeExpenses = viewMode === 'consolidated'
     ? (cloudStoreFilter === 'all' ? cloudExpenses : cloudExpenses.filter(e => e.storeId === cloudStoreFilter))
     : expenses;
 
@@ -1167,7 +1414,7 @@ function DashboardView({
   const activeTotalExpenses = rangedExpenses.reduce((sum, e) => sum + e.amount, 0);
   const activeNetCash = activeTotalSales - activeTotalExpenses;
 
-  const lowStockItems = products.filter(p => p.stock <= p.minStock);
+  const lowStockItems = products.filter(p => getProductStock(p) <= p.minStock);
 
   // Agrupar faturamento dinamicamente para o gráfico com base no período
   const getDynamicChartData = () => {
@@ -1282,7 +1529,7 @@ function DashboardView({
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-sm)' }}>
-            <button 
+            <button
               onClick={() => setViewMode('local')}
               style={{
                 padding: '6px 14px',
@@ -1298,7 +1545,7 @@ function DashboardView({
             >
               Esta Loja (Local)
             </button>
-            <button 
+            <button
               onClick={() => setViewMode('consolidated')}
               style={{
                 padding: '6px 14px',
@@ -1315,10 +1562,10 @@ function DashboardView({
               Rede (Ao Vivo)
             </button>
           </div>
-          
+
           {viewMode === 'consolidated' && (
             <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--primary-glow)' }}>
-              <button 
+              <button
                 onClick={() => setCloudStoreFilter('all')}
                 style={{
                   padding: '6px 14px',
@@ -1334,7 +1581,7 @@ function DashboardView({
               >
                 Todas as Lojas
               </button>
-              <button 
+              <button
                 onClick={() => setCloudStoreFilter('loja-1')}
                 style={{
                   padding: '6px 14px',
@@ -1350,7 +1597,7 @@ function DashboardView({
               >
                 Loja 1
               </button>
-              <button 
+              <button
                 onClick={() => setCloudStoreFilter('loja-2')}
                 style={{
                   padding: '6px 14px',
@@ -1395,7 +1642,7 @@ function DashboardView({
           </span>
         </div>
         <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-sm)' }}>
-          <button 
+          <button
             onClick={() => setTimeRange('month')}
             style={{
               padding: '6px 14px',
@@ -1411,7 +1658,7 @@ function DashboardView({
           >
             Mês Atual
           </button>
-          <button 
+          <button
             onClick={() => setTimeRange('year')}
             style={{
               padding: '6px 14px',
@@ -1427,7 +1674,7 @@ function DashboardView({
           >
             Ano Atual
           </button>
-          <button 
+          <button
             onClick={() => setTimeRange('all')}
             style={{
               padding: '6px 14px',
@@ -1516,34 +1763,7 @@ function DashboardView({
         </div>
       </div>
 
-      {/* Simulador de Código de Barras */}
-      <div className="simulator-panel">
-        <div className="simulator-title">
-          <Sparkles size={16} />
-          <span>Painel de Simulação de Vendas (Simular bipagem)</span>
-        </div>
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-          Como não estamos usando o leitor físico neste momento, clique em um botão abaixo para simular o leitor de código de barras enviando o código EAN de um produto para a Frente de Caixa.
-        </p>
-        <div className="simulator-buttons">
-          {products.slice(0, 5).map(p => (
-            <button 
-              key={p.id} 
-              className="sim-btn"
-              onClick={() => onSimulateScan(p.code)}
-            >
-              Bipar: {p.name}
-            </button>
-          ))}
-          <button 
-            className="sim-btn" 
-            style={{ borderColor: 'var(--danger-glow)', color: 'var(--danger)' }}
-            onClick={() => onSimulateScan("9999999999999")}
-          >
-            Bipar Código Inexistente
-          </button>
-        </div>
-      </div>
+
 
       {/* Gráfico & Alertas */}
       <div className="dashboard-details-grid">
@@ -1560,12 +1780,12 @@ function DashboardView({
               {timeRange === 'all' && 'Últimos 6 Meses'}
             </span>
           </div>
-          
+
           <div className="chart-container">
             {chartData.map((d, index) => (
               <div key={index} className="chart-bar-wrapper">
-                <div 
-                  className="chart-bar-fill" 
+                <div
+                  className="chart-bar-fill"
                   style={{ height: `${d.percentage}%` }}
                 >
                   <div className="chart-tooltip">R$ {d.amount.toFixed(2)}</div>
@@ -1613,7 +1833,7 @@ function DashboardView({
               Ir para Inventário
             </button>
           )}
-      </div>
+        </div>
       </div>
 
       {/* Painel de Vendas Recentes da Rede (Apenas modo Consolidado) */}
@@ -1643,12 +1863,12 @@ function DashboardView({
                   const storeColor = sale.storeId === 'loja-1' ? 'var(--primary)' : 'var(--brand-yellow)';
                   const itemsCount = sale.items ? sale.items.reduce((sum, item) => sum + (item.quantity || 1), 0) : 0;
                   return (
-                    <div key={idx} style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center', 
-                      padding: '12px', 
-                      backgroundColor: 'var(--bg-tertiary)', 
+                    <div key={idx} style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      backgroundColor: 'var(--bg-tertiary)',
                       borderRadius: 'var(--radius-md)',
                       border: '1px solid var(--border-color)'
                     }}>
@@ -1698,9 +1918,9 @@ function DashboardView({
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
               Baixe uma cópia completa de segurança contendo todo o seu inventário de produtos, histórico de vendas e lançamentos de despesas. Recomendamos salvar este backup semanalmente em um pendrive.
             </p>
-            <button 
-              onClick={onExportBackup} 
-              className="btn-primary" 
+            <button
+              onClick={onExportBackup}
+              className="btn-primary"
               style={{ marginTop: '12px', width: 'auto', padding: '10px 20px', display: 'flex', alignItems: 'center', gap: '8px' }}
             >
               <Download size={16} /> Fazer Backup (Exportar JSON)
@@ -1712,16 +1932,16 @@ function DashboardView({
               Para restaurar um backup anterior (por exemplo, após trocar de computador ou formatar o sistema), selecione o arquivo de backup (.json) exportado anteriormente.
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px' }}>
-              <input 
-                type="file" 
-                accept=".json" 
-                id="backup-upload" 
-                style={{ display: 'none' }} 
-                onChange={onImportBackup} 
+              <input
+                type="file"
+                accept=".json"
+                id="backup-upload"
+                style={{ display: 'none' }}
+                onChange={onImportBackup}
               />
-              <label 
-                htmlFor="backup-upload" 
-                className="btn-secondary" 
+              <label
+                htmlFor="backup-upload"
+                className="btn-secondary"
                 style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px' }}
               >
                 <Upload size={16} /> Escolher Arquivo de Backup
@@ -1750,7 +1970,11 @@ function PDVView({
   onSimulateScan,
   onQuickRegister,
   currentCashBalance = 0,
-  onAddToCart
+  onAddToCart,
+  discount,
+  setDiscount,
+  checkoutInstallments,
+  setCheckoutInstallments
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -1803,13 +2027,13 @@ function PDVView({
 
     for (const item of cart) {
       const nameLower = item.name.toLowerCase();
-      const matchRule = AI_RULES.find(rule => 
+      const matchRule = AI_RULES.find(rule =>
         rule.keywords.some(keyword => nameLower.includes(keyword))
       );
 
       if (matchRule) {
         // Procurar no estoque do catálogo o item sugerido que NÃO esteja no carrinho
-        const suggestionProduct = products.find(p => 
+        const suggestionProduct = products.find(p =>
           p.name.toLowerCase().includes(matchRule.suggestedKeyword) &&
           !cart.some(cartItem => cartItem.id === p.id)
         );
@@ -1828,14 +2052,14 @@ function PDVView({
             triggerProduct: item.name,
             suggestedProduct: {
               id: null,
-              name: matchRule.suggestedKeyword === 'cola' 
-                ? 'Adesivo Plástico Cola para PVC 175g Tigre' 
-                : matchRule.suggestedKeyword === 'fita isolante' 
-                  ? 'Fita Isolante Imperial 3M 10m' 
-                  : matchRule.suggestedKeyword === 'argamassa' 
-                    ? 'Argamassa ACIII 20kg Quartzolit' 
-                    : matchRule.suggestedKeyword === 'rolo' 
-                      ? 'Rolo de Lã para Pintura Tigre 23cm' 
+              name: matchRule.suggestedKeyword === 'cola'
+                ? 'Adesivo Plástico Cola para PVC 175g Tigre'
+                : matchRule.suggestedKeyword === 'fita isolante'
+                  ? 'Fita Isolante Imperial 3M 10m'
+                  : matchRule.suggestedKeyword === 'argamassa'
+                    ? 'Argamassa ACIII 20kg Quartzolit'
+                    : matchRule.suggestedKeyword === 'rolo'
+                      ? 'Rolo de Lã para Pintura Tigre 23cm'
                       : 'Fita Veda Rosca 18mm x 10m Tigre',
               salePrice: matchRule.suggestedKeyword === 'cola' ? 12.90 : matchRule.suggestedKeyword === 'fita isolante' ? 4.80 : matchRule.suggestedKeyword === 'argamassa' ? 27.50 : matchRule.suggestedKeyword === 'rolo' ? 22.50 : 3.50,
               costPrice: matchRule.suggestedKeyword === 'cola' ? 7.20 : matchRule.suggestedKeyword === 'fita isolante' ? 2.10 : matchRule.suggestedKeyword === 'argamassa' ? 18.20 : matchRule.suggestedKeyword === 'rolo' ? 12.00 : 1.50,
@@ -1897,8 +2121,8 @@ function PDVView({
       return;
     }
     const cleanTerm = searchTerm.toLowerCase();
-    const filtered = products.filter(p => 
-      p.name.toLowerCase().includes(cleanTerm) || 
+    const filtered = products.filter(p =>
+      p.name.toLowerCase().includes(cleanTerm) ||
       p.code.includes(cleanTerm) ||
       (p.category && p.category.toLowerCase().includes(cleanTerm))
     );
@@ -1906,16 +2130,17 @@ function PDVView({
   }, [searchTerm, products]);
 
   const selectProductManual = (product) => {
-    if (product.stock <= 0) {
-      alert(`Produto '${product.name}' está sem estoque!`);
+    const currentStock = getProductStock(product);
+    if (currentStock <= 0) {
+      alert(`Produto '${product.name}' está sem estoque nesta loja!`);
       return;
     }
     const existing = cart.find(item => item.id === product.id);
-    if (existing && existing.quantity >= product.stock) {
+    if (existing && existing.quantity >= currentStock) {
       alert("Estoque máximo atingido!");
       return;
     }
-    
+
     onAddToCart(product);
 
     setSearchTerm('');
@@ -1927,31 +2152,32 @@ function PDVView({
 
   const totalCart = cart.reduce((sum, item) => sum + (item.salePrice * item.quantity), 0);
   const totalCost = cart.reduce((sum, item) => sum + ((item.costPrice || 0) * item.quantity), 0);
-  const profit = totalCart - totalCost;
+  const totalCartWithDiscount = Math.max(0, totalCart - discount);
+  const profit = totalCartWithDiscount - totalCost;
 
   // Cálculo de troco
   const numericPaid = parseFloat(amountPaid.replace(',', '.')) || 0;
-  const change = numericPaid > totalCart ? numericPaid - totalCart : 0;
+  const change = numericPaid > totalCartWithDiscount ? numericPaid - totalCartWithDiscount : 0;
 
   return (
     <div className="pdv-layout">
       {/* LADO ESQUERDO: Carrinho e Pesquisa */}
       <div className="pdv-left-panel">
-        
+
         {/* Barra de Pesquisa manual / bipagem manual */}
         <div className="barcode-search-container">
           <div className="input-group">
             <Search className="input-icon" size={20} />
-            <input 
+            <input
               ref={searchInputRef}
-              type="text" 
-              className="input-field" 
+              type="text"
+              className="input-field"
               placeholder="Digite o código de barras ou nome do produto (Aperte F2 para focar)..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          
+
           {/* Resultados de Pesquisa Rápida */}
           {searchResults.length > 0 && (
             <div style={{
@@ -1965,7 +2191,7 @@ function PDVView({
               boxShadow: 'var(--shadow-lg)'
             }}>
               {searchResults.map(p => (
-                <div 
+                <div
                   key={p.id}
                   onClick={() => selectProductManual(p)}
                   style={{
@@ -2048,13 +2274,13 @@ function PDVView({
                 </p>
               </div>
             </div>
-            
-            <button 
-              className="btn-primary" 
-              style={{ 
-                width: 'auto', 
-                padding: '10px 18px', 
-                fontSize: '13px', 
+
+            <button
+              className="btn-primary"
+              style={{
+                width: 'auto',
+                padding: '10px 18px',
+                fontSize: '13px',
                 backgroundColor: suggestion.isVirtual ? 'var(--brand-yellow)' : 'var(--primary)',
                 color: suggestion.isVirtual ? '#000' : '#fff',
                 borderColor: 'transparent'
@@ -2130,25 +2356,7 @@ function PDVView({
             )}
           </div>
 
-          {/* Atalho do Simulador Rápido na Aba PDV */}
-          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
-            <div className="simulator-title" style={{ fontSize: '12px', marginBottom: '8px' }}>
-              <Sparkles size={12} />
-              <span>Simular bipagem rápida nesta tela:</span>
-            </div>
-            <div className="simulator-buttons">
-              {products.slice(0, 3).map(p => (
-                <button 
-                  key={p.id} 
-                  className="sim-btn"
-                  style={{ padding: '4px 8px', fontSize: '11px' }}
-                  onClick={() => onSimulateScan(p.code)}
-                >
-                  Bipar {p.name.split(' ')[0]}
-                </button>
-              ))}
-            </div>
-          </div>
+
 
           {/* Painel de Atalhos Rápidos */}
           <div style={{
@@ -2213,42 +2421,132 @@ function PDVView({
           </div>
           <div className="checkout-row">
             <span>Desconto</span>
-            <span style={{ color: 'var(--success)' }}>R$ 0,00</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {discount > 0 && (
+                <button
+                  style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                  onClick={() => setDiscount(0)}
+                >
+                  [Remover]
+                </button>
+              )}
+              <span style={{ color: 'var(--success)', fontWeight: '700' }}>
+                {discount > 0 ? `- R$ ${discount.toFixed(2)}` : 'R$ 0,00'}
+              </span>
+            </div>
           </div>
+
+          {/* Caixa de Sugestão de Desconto */}
+          {totalCart > 0 && discount === 0 && (
+            (() => {
+              let pct = 0;
+              if (totalCart >= 500) pct = 10;
+              else if (totalCart >= 200) pct = 7;
+              else if (totalCart >= 100) pct = 5;
+              else if (totalCart >= 50) pct = 3;
+
+              if (pct === 0) return null;
+
+              const suggestedAmount = parseFloat((totalCart * (pct / 100)).toFixed(2));
+              return (
+                <div style={{
+                  marginTop: '12px',
+                  padding: '12px',
+                  backgroundColor: 'rgba(74, 222, 128, 0.05)',
+                  border: '1px dashed var(--success)',
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  animation: 'fadeIn 0.2s ease-out'
+                }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Sugestão de Desconto ({pct}%): <strong style={{ color: 'var(--success)' }}>R$ {suggestedAmount.toFixed(2)}</strong>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      width: 'auto',
+                      height: 'auto',
+                      backgroundColor: 'var(--success)',
+                      borderColor: 'var(--success)',
+                      color: '#000',
+                      fontWeight: '700'
+                    }}
+                    onClick={() => setDiscount(suggestedAmount)}
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              );
+            })()
+          )}
 
           <div style={{ marginTop: '16px' }}>
             <span className="input-label">Forma de Pagamento</span>
             <div className="payment-grid">
-              <button 
+              <button
                 className={`payment-btn ${paymentMethod === 'Pix' ? 'active' : ''}`}
                 onClick={() => setPaymentMethod('Pix')}
               >
                 <Smartphone size={20} />
                 Pix
               </button>
-              <button 
+              <button
                 className={`payment-btn ${paymentMethod === 'Dinheiro' ? 'active' : ''}`}
                 onClick={() => setPaymentMethod('Dinheiro')}
               >
                 <Coins size={20} />
                 Dinheiro
               </button>
-              <button 
+              <button
                 className={`payment-btn ${paymentMethod === 'Crédito' ? 'active' : ''}`}
                 onClick={() => setPaymentMethod('Crédito')}
               >
                 <CreditCard size={20} />
                 Cartão Crédito
               </button>
-              <button 
+              <button
                 className={`payment-btn ${paymentMethod === 'Débito' ? 'active' : ''}`}
                 onClick={() => setPaymentMethod('Débito')}
               >
                 <CreditCard size={20} />
                 Cartão Débito
               </button>
+              <button
+                className={`payment-btn ${paymentMethod === 'Fiado' ? 'active' : ''}`}
+                onClick={() => setPaymentMethod('Fiado')}
+              >
+                <BookOpen size={20} />
+                Marcado / Fiado
+              </button>
             </div>
           </div>
+
+          {/* Parcelas no pagamento em crédito */}
+          {paymentMethod === 'Crédito' && (
+            <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px', animation: 'modalFadeIn 0.2s ease-out' }}>
+              <div className="form-group">
+                <label>Número de Parcelas</label>
+                <select value={checkoutInstallments} onChange={(e) => setCheckoutInstallments(e.target.value)}>
+                  <option value="1x">1x (À vista)</option>
+                  <option value="2x">2x</option>
+                  <option value="3x">3x</option>
+                  <option value="4x">4x</option>
+                  <option value="5x">5x</option>
+                  <option value="6x">6x</option>
+                  <option value="7x">7x</option>
+                  <option value="8x">8x</option>
+                  <option value="9x">9x</option>
+                  <option value="10x">10x</option>
+                  <option value="11x">11x</option>
+                  <option value="12x">12x</option>
+                </select>
+              </div>
+            </div>
+          )}
 
           {/* Troco no pagamento em dinheiro */}
           {paymentMethod === 'Dinheiro' && (
@@ -2257,9 +2555,9 @@ function PDVView({
                 <label>Valor Pago pelo Cliente</label>
                 <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                   <span style={{ position: 'absolute', left: '12px', color: 'var(--text-muted)' }}>R$</span>
-                  <input 
+                  <input
                     ref={amountPaidInputRef}
-                    type="text" 
+                    type="text"
                     placeholder="0,00"
                     style={{ paddingLeft: '32px', width: '100%' }}
                     value={amountPaid}
@@ -2278,18 +2576,18 @@ function PDVView({
           )}
 
           {/* Agendamento de Entrega Form */}
-          <div style={{ 
-            marginTop: '16px', 
-            padding: '12px 14px', 
-            border: '1px solid var(--border-color)', 
-            borderRadius: 'var(--radius-md)', 
-            backgroundColor: 'var(--bg-tertiary)' 
+          <div style={{
+            marginTop: '16px',
+            padding: '12px 14px',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'var(--bg-tertiary)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={() => setRequiresDelivery(!requiresDelivery)}>
-              <input 
-                type="checkbox" 
-                checked={requiresDelivery} 
-                onChange={(e) => setRequiresDelivery(e.target.checked)} 
+              <input
+                type="checkbox"
+                checked={requiresDelivery}
+                onChange={(e) => setRequiresDelivery(e.target.checked)}
                 style={{ cursor: 'pointer', width: '16px', height: '16px' }}
                 onClick={(e) => e.stopPropagation()}
               />
@@ -2300,9 +2598,9 @@ function PDVView({
               <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px', animation: 'modalFadeIn 0.2s ease-out' }}>
                 <div>
                   <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Recebedor / Contato na Obra</label>
-                  <input 
-                    type="text" 
-                    placeholder="Nome de quem vai receber..." 
+                  <input
+                    type="text"
+                    placeholder="Nome de quem vai receber..."
                     value={receiverName}
                     onChange={(e) => setReceiverName(e.target.value)}
                     style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
@@ -2310,9 +2608,9 @@ function PDVView({
                 </div>
                 <div>
                   <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Endereço de Entrega</label>
-                  <input 
-                    type="text" 
-                    placeholder="Rua, número, bairro, cidade..." 
+                  <input
+                    type="text"
+                    placeholder="Rua, número, bairro, cidade..."
                     value={deliveryAddress}
                     onChange={(e) => setDeliveryAddress(e.target.value)}
                     style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
@@ -2321,8 +2619,8 @@ function PDVView({
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                   <div>
                     <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Data Programada</label>
-                    <input 
-                      type="date" 
+                    <input
+                      type="date"
                       value={deliveryDate}
                       onChange={(e) => setDeliveryDate(e.target.value)}
                       style={{ padding: '6px 8px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
@@ -2330,9 +2628,9 @@ function PDVView({
                   </div>
                   <div>
                     <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Observações</label>
-                    <input 
-                      type="text" 
-                      placeholder="Instruções de entrega..." 
+                    <input
+                      type="text"
+                      placeholder="Instruções de entrega..."
                       value={deliveryNotes}
                       onChange={(e) => setDeliveryNotes(e.target.value)}
                       style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
@@ -2347,9 +2645,9 @@ function PDVView({
 
           <div className="checkout-row total" style={{ marginTop: '16px' }}>
             <span>TOTAL</span>
-            <span>R$ {totalCart.toFixed(2)}</span>
+            <span>R$ {totalCartWithDiscount.toFixed(2)}</span>
           </div>
-          
+
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
             <span>Itens no carrinho: {cart.reduce((sum, i) => sum + i.quantity, 0)}</span>
             <span>Lucro presumido nesta venda: R$ {profit.toFixed(2)}</span>
@@ -2357,8 +2655,8 @@ function PDVView({
         </div>
 
         <div className="checkout-footer">
-          <button 
-            className="btn-primary" 
+          <button
+            className="btn-primary"
             disabled={cart.length === 0}
             onClick={() => {
               const deliveryDetails = requiresDelivery ? {
@@ -2390,14 +2688,26 @@ function PDVView({
 // ==========================================
 // 3. TELA: CADASTRO PRODUTOS / INVENTÁRIO
 // ==========================================
-function ProductsView({ products, onEditProduct, onDeleteProduct }) {
+function ProductsView({ products, onEditProduct, onDeleteProduct, onTransferStock }) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [storeFilter, setStoreFilter] = useState('all'); // 'all' | 'loja-1' | 'loja-2'
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.code.includes(searchTerm) ||
-    (p.category && p.category.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.code.includes(searchTerm) ||
+      (p.category && p.category.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    if (!matchesSearch) return false;
+
+    if (storeFilter === 'loja-1') {
+      return (p.stockLoja1 ?? p.stock ?? 0) > 0;
+    } else if (storeFilter === 'loja-2') {
+      return (p.stockLoja2 ?? 0) > 0;
+    }
+    return true;
+  });
+
+  const getProductStock = (p) => (p.stockLoja1 ?? p.stock ?? 0) + (p.stockLoja2 ?? 0);
 
   return (
     <div className="section-card">
@@ -2406,17 +2716,48 @@ function ProductsView({ products, onEditProduct, onDeleteProduct }) {
           <Package size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
           Lista de Produtos em Estoque
         </h2>
-        
-        <div className="input-group" style={{ maxWidth: '350px', width: '100%' }}>
-          <Search className="input-icon" size={18} />
-          <input 
-            type="text" 
-            className="input-field" 
-            style={{ padding: '10px 14px 10px 42px' }}
-            placeholder="Pesquisar por nome, código ou categoria..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Seletor de Loja */}
+          <div style={{ display: 'flex', gap: '6px', backgroundColor: 'var(--bg-secondary)', padding: '4px', borderRadius: 'var(--radius-md)' }}>
+            {[
+              { id: 'all', label: 'Todas Lojas' },
+              { id: 'loja-1', label: 'Loja 1' },
+              { id: 'loja-2', label: 'Loja 2' }
+            ].map(filter => (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => setStoreFilter(filter.id)}
+                className={`tab-btn-pill ${storeFilter === filter.id ? 'active' : ''}`}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: storeFilter === filter.id ? 'var(--primary)' : 'transparent',
+                  color: storeFilter === filter.id ? '#ffffff' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="input-group" style={{ maxWidth: '350px', width: '220px' }}>
+            <Search className="input-icon" size={18} />
+            <input
+              type="text"
+              className="input-field"
+              style={{ padding: '10px 14px 10px 42px' }}
+              placeholder="Pesquisar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 
@@ -2435,13 +2776,13 @@ function ProductsView({ products, onEditProduct, onDeleteProduct }) {
                 <th>Categoria</th>
                 <th>Custo</th>
                 <th>Venda</th>
-                <th>Estoque Atual</th>
-                <th style={{ width: '100px', textAlign: 'right' }}>Ações</th>
+                <th style={{ width: '220px' }}>Estoque por Loja</th>
+                <th style={{ width: '120px', textAlign: 'right' }}>Ações</th>
               </tr>
             </thead>
             <tbody>
               {filteredProducts.map(p => {
-                const isLowStock = p.stock <= p.minStock;
+                const isLowStock = getProductStock(p) <= p.minStock;
                 return (
                   <tr key={p.id}>
                     <td style={{ fontFamily: 'monospace', fontWeight: '500' }}>
@@ -2460,30 +2801,57 @@ function ProductsView({ products, onEditProduct, onDeleteProduct }) {
                     <td>R$ {p.costPrice.toFixed(2)}</td>
                     <td><strong>R$ {p.salePrice.toFixed(2)}</strong></td>
                     <td>
-                      <span style={{ 
-                        fontWeight: '700', 
-                        color: isLowStock ? 'var(--warning)' : 'var(--success)'
-                      }}>
-                        {p.stock} {p.unit || 'un'}
-                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <div style={{ fontSize: '11px', display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>🏠 Loja 1 (Matriz):</span>
+                          <strong>{p.stockLoja1 ?? p.stock ?? 0} {p.unit || 'un'}</strong>
+                        </div>
+                        <div style={{ fontSize: '11px', display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>🏢 Loja 2 (Filial):</span>
+                          <strong>{p.stockLoja2 ?? 0} {p.unit || 'un'}</strong>
+                        </div>
+                        <div style={{
+                          fontSize: '11px',
+                          color: isLowStock ? 'var(--warning)' : 'var(--text-muted)',
+                          borderTop: '1px dashed var(--border-color)',
+                          marginTop: '2px',
+                          paddingTop: '2px',
+                          display: 'flex',
+                          justifyContent: 'space-between'
+                        }}>
+                          <span>Total Geral:</span>
+                          <strong>{(p.stockLoja1 ?? p.stock ?? 0) + (p.stockLoja2 ?? 0)} {p.unit || 'un'}</strong>
+                        </div>
+                      </div>
                       {isLowStock && (
-                        <div style={{ fontSize: '11px', color: 'var(--warning)', fontWeight: '500' }}>
-                          Mínimo: {p.minStock} {p.unit}
+                        <div style={{ fontSize: '10px', color: 'var(--warning)', fontWeight: '600', marginTop: '2px', textAlign: 'right' }}>
+                          ⚠ Estoque Crítico (Mín: {p.minStock})
                         </div>
                       )}
                     </td>
                     <td>
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                        <button 
-                          className="delete-btn" 
-                          style={{ color: 'var(--text-secondary)' }}
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                        <button
+                          className="delete-btn"
+                          style={{ color: 'var(--primary)', padding: '4px' }}
+                          onClick={() => onTransferStock(p)}
+                          title="Transferir Estoque entre Lojas"
+                        >
+                          <ArrowRightLeft size={16} />
+                        </button>
+                        <button
+                          className="delete-btn"
+                          style={{ color: 'var(--text-secondary)', padding: '4px' }}
                           onClick={() => onEditProduct(p)}
+                          title="Editar Produto"
                         >
                           <Edit3 size={16} />
                         </button>
-                        <button 
+                        <button
                           className="delete-btn"
+                          style={{ padding: '4px' }}
                           onClick={() => onDeleteProduct(p.id)}
+                          title="Excluir Produto"
                         >
                           <Trash2 size={16} />
                         </button>
@@ -2511,12 +2879,12 @@ function HistoryExpensesView({ sales, expenses, onDeleteExpense }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      
+
       {/* Sub-Navegação interna */}
       <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
-        <button 
+        <button
           className={`btn-secondary ${subTab === 'sales' ? 'active' : ''}`}
-          style={{ 
+          style={{
             backgroundColor: subTab === 'sales' ? 'var(--primary-glow)' : 'var(--bg-card)',
             borderColor: subTab === 'sales' ? 'var(--primary)' : 'var(--border-color)',
             color: subTab === 'sales' ? 'var(--primary)' : 'var(--text-primary)',
@@ -2527,9 +2895,9 @@ function HistoryExpensesView({ sales, expenses, onDeleteExpense }) {
           <History size={16} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
           Histórico de Vendas ({sales.length})
         </button>
-        <button 
+        <button
           className={`btn-secondary ${subTab === 'expenses' ? 'active' : ''}`}
-          style={{ 
+          style={{
             backgroundColor: subTab === 'expenses' ? 'var(--danger-glow)' : 'var(--bg-card)',
             borderColor: subTab === 'expenses' ? 'var(--danger)' : 'var(--border-color)',
             color: subTab === 'expenses' ? 'var(--danger)' : 'var(--text-primary)',
@@ -2631,7 +2999,7 @@ function HistoryExpensesView({ sales, expenses, onDeleteExpense }) {
                       <td><strong style={{ color: 'var(--danger)' }}>R$ {exp.amount.toFixed(2)}</strong></td>
                       <td>
                         <div style={{ textAlign: 'right' }}>
-                          <button 
+                          <button
                             className="delete-btn"
                             onClick={() => onDeleteExpense(exp.id)}
                           >
@@ -2660,17 +3028,34 @@ function ProductModal({ product, onClose, onSave }) {
   const [description, setDescription] = useState(product ? product.description : '');
   const [costPrice, setCostPrice] = useState(product ? product.costPrice.toString() : '');
   const [salePrice, setSalePrice] = useState(product ? product.salePrice.toString() : '');
-  const [stock, setStock] = useState(product ? product.stock.toString() : '');
+
+  const [stockLoja1, setStockLoja1] = useState(() => {
+    if (product) {
+      return (product.stockLoja1 ?? product.stock ?? 0).toString();
+    }
+    return '';
+  });
+
+  const [stockLoja2, setStockLoja2] = useState(() => {
+    if (product) {
+      return (product.stockLoja2 ?? 0).toString();
+    }
+    return '';
+  });
+
   const [minStock, setMinStock] = useState(product ? product.minStock.toString() : '');
   const [category, setCategory] = useState(product ? product.category : 'Materiais Básicos');
   const [unit, setUnit] = useState(product ? product.unit : 'Unidade');
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!code || !name || !costPrice || !salePrice || !stock || !minStock) {
+    if (!code || !name || !costPrice || !salePrice || !stockLoja1 || !stockLoja2 || !minStock) {
       alert("Por favor, preencha todos os campos obrigatórios.");
       return;
     }
+
+    const s1 = parseInt(stockLoja1) || 0;
+    const s2 = parseInt(stockLoja2) || 0;
 
     onSave({
       id: product ? product.id : null,
@@ -2679,7 +3064,9 @@ function ProductModal({ product, onClose, onSave }) {
       description: description.trim(),
       costPrice: parseFloat(costPrice.replace(',', '.')),
       salePrice: parseFloat(salePrice.replace(',', '.')),
-      stock: parseInt(stock),
+      stockLoja1: s1,
+      stockLoja2: s2,
+      stock: s1 + s2,
       minStock: parseInt(minStock),
       category,
       unit
@@ -2707,11 +3094,11 @@ function ProductModal({ product, onClose, onSave }) {
             <div className="form-group" style={{ position: 'relative' }}>
               <label>Código de Barras (EAN) *</label>
               <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                <input 
-                  type="text" 
-                  value={code} 
-                  onChange={(e) => setCode(e.target.value)} 
-                  placeholder="Bipe com o leitor ou digite..." 
+                <input
+                  type="text"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="Bipe com o leitor ou digite..."
                   required
                   style={{ flex: 1, minWidth: 0 }}
                 />
@@ -2720,14 +3107,14 @@ function ProductModal({ product, onClose, onSave }) {
                 </button>
               </div>
             </div>
-            
+
             <div className="form-group">
               <label>Nome do Produto *</label>
-              <input 
-                type="text" 
-                value={name} 
-                onChange={(e) => setName(e.target.value)} 
-                placeholder="Ex: Cimento CP II 50kg" 
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex: Cimento CP II 50kg"
                 required
               />
             </div>
@@ -2735,11 +3122,11 @@ function ProductModal({ product, onClose, onSave }) {
 
           <div className="form-group">
             <label>Descrição Opcional</label>
-            <input 
-              type="text" 
-              value={description} 
-              onChange={(e) => setDescription(e.target.value)} 
-              placeholder="Ex: Fabricante: Votoran, Secagem rápida" 
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Ex: Fabricante: Votoran, Secagem rápida"
             />
           </div>
 
@@ -2756,7 +3143,7 @@ function ProductModal({ product, onClose, onSave }) {
                 <option value="Ferramentas">Ferramentas</option>
               </select>
             </div>
-            
+
             <div className="form-group">
               <label>Unidade de Medida</label>
               <select value={unit} onChange={(e) => setUnit(e.target.value)}>
@@ -2776,22 +3163,22 @@ function ProductModal({ product, onClose, onSave }) {
           <div className="form-row">
             <div className="form-group">
               <label>Preço de Custo (Compra) *</label>
-              <input 
-                type="text" 
-                value={costPrice} 
-                onChange={(e) => setCostPrice(e.target.value)} 
-                placeholder="0,00" 
+              <input
+                type="text"
+                value={costPrice}
+                onChange={(e) => setCostPrice(e.target.value)}
+                placeholder="0,00"
                 required
               />
             </div>
-            
+
             <div className="form-group">
               <label>Preço de Venda (Cliente) *</label>
-              <input 
-                type="text" 
-                value={salePrice} 
-                onChange={(e) => setSalePrice(e.target.value)} 
-                placeholder="0,00" 
+              <input
+                type="text"
+                value={salePrice}
+                onChange={(e) => setSalePrice(e.target.value)}
+                placeholder="0,00"
                 required
               />
             </div>
@@ -2799,23 +3186,34 @@ function ProductModal({ product, onClose, onSave }) {
 
           <div className="form-row">
             <div className="form-group">
-              <label>Estoque Atual *</label>
-              <input 
-                type="number" 
-                value={stock} 
-                onChange={(e) => setStock(e.target.value)} 
-                placeholder="Ex: 50" 
+              <label>Estoque Loja 1 (Matriz) *</label>
+              <input
+                type="number"
+                value={stockLoja1}
+                onChange={(e) => setStockLoja1(e.target.value)}
+                placeholder="Ex: 50"
                 required
               />
             </div>
-            
+
             <div className="form-group">
-              <label>Estoque Mínimo (Alerta) *</label>
-              <input 
-                type="number" 
-                value={minStock} 
-                onChange={(e) => setMinStock(e.target.value)} 
-                placeholder="Ex: 10" 
+              <label>Estoque Loja 2 (Filial) *</label>
+              <input
+                type="number"
+                value={stockLoja2}
+                onChange={(e) => setStockLoja2(e.target.value)}
+                placeholder="Ex: 0"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Mínimo (Alerta) *</label>
+              <input
+                type="number"
+                value={minStock}
+                onChange={(e) => setMinStock(e.target.value)}
+                placeholder="Ex: 10"
                 required
               />
             </div>
@@ -2825,6 +3223,90 @@ function ProductModal({ product, onClose, onSave }) {
         <div className="modal-footer">
           <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
           <button type="submit" className="btn-primary" style={{ width: 'auto', padding: '10px 24px' }}>Salvar Produto</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ==========================================
+// MODAL: TRANSFERIR ESTOQUE ENTRE LOJAS
+// ==========================================
+function TransferStockModal({ product, onClose, onConfirm }) {
+  const [fromStore, setFromStore] = useState('loja-1');
+  const [toStore, setToStore] = useState('loja-2');
+  const [qty, setQty] = useState('');
+
+  const stockFrom = fromStore === 'loja-1' ? (product.stockLoja1 ?? product.stock ?? 0) : (product.stockLoja2 ?? 0);
+  const stockTo = toStore === 'loja-1' ? (product.stockLoja1 ?? product.stock ?? 0) : (product.stockLoja2 ?? 0);
+
+  const handleConfirm = (e) => {
+    e.preventDefault();
+    const amount = parseInt(qty);
+    if (!amount || amount <= 0) {
+      alert("Por favor, insira uma quantidade válida.");
+      return;
+    }
+    if (amount > stockFrom) {
+      alert(`Quantidade indisponível na origem! Estoque atual: ${stockFrom}`);
+      return;
+    }
+    onConfirm(product.id, fromStore, toStore, amount);
+  };
+
+  const toggleStores = () => {
+    setFromStore(prev => prev === 'loja-1' ? 'loja-2' : 'loja-1');
+    setToStore(prev => prev === 'loja-1' ? 'loja-2' : 'loja-1');
+  };
+
+  return (
+    <div className="modal-overlay">
+      <form className="modal-content" onSubmit={handleConfirm} style={{ maxWidth: '400px' }}>
+        <div className="modal-header">
+          <h2 style={{ fontSize: '18px', fontWeight: '700' }}>Transferir Estoque</h2>
+          <button type="button" className="delete-btn" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div>
+            <strong style={{ fontSize: '15px' }}>{product.name}</strong>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Código: {product.code}</div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr auto 1.2fr', alignItems: 'center', gap: '12px', padding: '12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '10px', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Origem</div>
+              <strong style={{ fontSize: '13px', display: 'block', marginTop: '2px' }}>{fromStore === 'loja-1' ? 'Loja 1 (Matriz)' : 'Loja 2 (Filial)'}</strong>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginTop: '2px' }}>Estoque: {stockFrom}</span>
+            </div>
+
+            <button type="button" className="qty-btn" style={{ width: '32px', height: '32px', border: '1px solid var(--border-color)', borderRadius: '50%' }} onClick={toggleStores}>
+              ⇄
+            </button>
+
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '10px', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Destino</div>
+              <strong style={{ fontSize: '13px', display: 'block', marginTop: '2px' }}>{toStore === 'loja-1' ? 'Loja 1 (Matriz)' : 'Loja 2 (Filial)'}</strong>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginTop: '2px' }}>Estoque: {stockTo}</span>
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Quantidade a Transferir *</label>
+            <input
+              type="number"
+              required
+              min="1"
+              max={stockFrom}
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              placeholder="Ex: 10"
+              style={{ width: '100%' }}
+            />
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="btn-primary" style={{ width: 'auto', padding: '10px 24px' }}>Confirmar Transferência</button>
         </div>
       </form>
     </div>
@@ -2864,11 +3346,11 @@ function ExpenseModal({ onClose, onSave }) {
         <div className="modal-body">
           <div className="form-group">
             <label>Descrição da Despesa *</label>
-            <input 
-              type="text" 
-              value={description} 
-              onChange={(e) => setDescription(e.target.value)} 
-              placeholder="Ex: Conta de Luz Enel Julho" 
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Ex: Conta de Luz Enel Julho"
               required
             />
           </div>
@@ -2876,15 +3358,15 @@ function ExpenseModal({ onClose, onSave }) {
           <div className="form-row">
             <div className="form-group">
               <label>Valor da Despesa *</label>
-              <input 
-                type="text" 
-                value={amount} 
-                onChange={(e) => setAmount(e.target.value)} 
-                placeholder="0,00" 
+              <input
+                type="text"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0,00"
                 required
               />
             </div>
-            
+
             <div className="form-group">
               <label>Categoria de Gasto</label>
               <select value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -2931,7 +3413,7 @@ function LoginView({ onLogin }) {
         <div className="login-logo-container" style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
           <img src="/logo.png" alt="Novo Lar Logo" style={{ width: '100%', maxWidth: '280px', height: 'auto', objectFit: 'contain' }} />
         </div>
-        
+
         <h2 className="login-title">Acesso ao Sistema</h2>
         <p className="login-subtitle">Escolha o seu terminal e insira a senha</p>
 
@@ -2976,7 +3458,7 @@ function LoginView({ onLogin }) {
 // ==========================================
 function DailyDashboardView({ sales, expenses, products, onSimulateScan, onChangeTab, getCashBalanceAtDate }) {
   const todayStr = new Date().toISOString().split('T')[0];
-  
+
   const todaySales = sales.filter(s => s.timestamp.split('T')[0] === todayStr);
   const todayExpenses = expenses.filter(e => e.timestamp.split('T')[0] === todayStr);
 
@@ -2989,7 +3471,7 @@ function DailyDashboardView({ sales, expenses, products, onSimulateScan, onChang
   const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(todayStr) : 0;
   const closingCash = openingCash + totalSales - totalExpenses;
 
-  const lowStockItems = products.filter(p => p.stock <= p.minStock);
+  const lowStockItems = products.filter(p => getProductStock(p) <= p.minStock);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -3178,38 +3660,7 @@ function DailyDashboardView({ sales, expenses, products, onSimulateScan, onChang
             </div>
           </div>
 
-          {/* Painel de Simulação */}
-          <div className="section-card" style={{ backgroundColor: 'var(--primary-glow)', borderColor: 'rgba(18, 121, 138, 0.15)' }}>
-            <div className="card-header">
-              <h3 className="card-title" style={{ color: 'var(--primary)' }}>Simulador de Vendas</h3>
-            </div>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-              Bipe virtualmente produtos selecionando o catálogo de simulação para testar o PDV de forma rápida.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-              {products.slice(0, 3).map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => onSimulateScan(p.code)}
-                  className="qty-btn"
-                  style={{
-                    width: '100%',
-                    justifyContent: 'flex-start',
-                    padding: '8px 12px',
-                    fontSize: '12px',
-                    height: 'auto',
-                    textAlign: 'left',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}
-                >
-                  <Barcode size={14} style={{ marginRight: '6px' }} />
-                  Bipar: {p.name}
-                </button>
-              ))}
-            </div>
-          </div>
+
         </div>
       </div>
     </div>
@@ -3220,14 +3671,24 @@ function DailyDashboardView({ sales, expenses, products, onSimulateScan, onChang
 // 8. TELA: RELATÓRIOS POR CALENDÁRIO
 // ==========================================
 function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
-  const [selectedDate, setSelectedDate] = useState(() => {
-    return new Date().toISOString().split('T')[0];
-  });
-
+  const [reportMode, setReportMode] = useState('single'); // 'single' | 'range'
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [currentMonth, setCurrentMonth] = useState(() => new Date());
 
-  const daySales = sales.filter(s => s.timestamp.split('T')[0] === selectedDate);
-  const dayExpenses = expenses.filter(e => e.timestamp.split('T')[0] === selectedDate);
+  const daySales = reportMode === 'single'
+    ? sales.filter(s => s.timestamp.split('T')[0] === startDate)
+    : sales.filter(s => {
+      const d = s.timestamp.split('T')[0];
+      return d >= startDate && d <= endDate;
+    });
+
+  const dayExpenses = reportMode === 'single'
+    ? expenses.filter(e => e.timestamp.split('T')[0] === startDate)
+    : expenses.filter(e => {
+      const d = e.timestamp.split('T')[0];
+      return d >= startDate && d <= endDate;
+    });
 
   const totalSales = daySales.reduce((sum, s) => sum + s.totalPrice, 0);
   const totalProfit = daySales.reduce((sum, s) => sum + s.profit, 0);
@@ -3235,8 +3696,34 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
   const netCash = totalSales - totalExpenses;
 
   // Calculando saldos de abertura e fechamento
-  const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(selectedDate) : 0;
+  const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(startDate) : 0;
   const closingCash = openingCash + totalSales - totalExpenses;
+
+  // Detalhamento de formas de pagamento
+  const pixAmount = daySales
+    .filter(s => s.paymentMethod === 'Pix')
+    .reduce((sum, s) => sum + s.totalPrice, 0);
+
+  const cashAmount = daySales
+    .filter(s => s.paymentMethod === 'Dinheiro')
+    .reduce((sum, s) => sum + s.totalPrice, 0);
+
+  const cardAmount = daySales
+    .filter(s => {
+      const pm = s.paymentMethod.toLowerCase();
+      return pm.includes('cartão') || pm.includes('card') || pm.includes('crédito') || pm.includes('débito');
+    })
+    .reduce((sum, s) => sum + s.totalPrice, 0);
+
+  const otherAmount = daySales
+    .filter(s => {
+      const pm = s.paymentMethod.toLowerCase();
+      const isPix = pm === 'pix';
+      const isCash = pm === 'dinheiro';
+      const isCard = pm.includes('cartão') || pm.includes('card') || pm.includes('crédito') || pm.includes('débito');
+      return !isPix && !isCash && !isCard;
+    })
+    .reduce((sum, s) => sum + s.totalPrice, 0);
 
   const getDaysInMonth = (date) => {
     const year = date.getFullYear();
@@ -3265,6 +3752,19 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
   ];
 
+  const handleDayClick = (formattedDate) => {
+    if (reportMode === 'single') {
+      setStartDate(formattedDate);
+      setEndDate(formattedDate);
+    } else {
+      if (formattedDate < startDate) {
+        setStartDate(formattedDate);
+      } else {
+        setEndDate(formattedDate);
+      }
+    }
+  };
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: '24px' }}>
       {/* Lado Esquerdo: Calendário */}
@@ -3272,7 +3772,45 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
         <div className="card-header" style={{ marginBottom: '12px' }}>
           <h3 className="card-title">Selecione uma Data</h3>
         </div>
-        
+
+        {/* Seletor de Modo: Dia Único vs Período */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', backgroundColor: 'var(--bg-secondary)', padding: '4px', borderRadius: 'var(--radius-md)' }}>
+          <button
+            className={`tab-btn-pill ${reportMode === 'single' ? 'active' : ''}`}
+            onClick={() => setReportMode('single')}
+            style={{
+              flex: 1,
+              padding: '8px',
+              fontSize: '12px',
+              fontWeight: '700',
+              border: 'none',
+              borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer',
+              backgroundColor: reportMode === 'single' ? 'var(--primary)' : 'transparent',
+              color: reportMode === 'single' ? '#fff' : 'var(--text-secondary)'
+            }}
+          >
+            Dia Único
+          </button>
+          <button
+            className={`tab-btn-pill ${reportMode === 'range' ? 'active' : ''}`}
+            onClick={() => setReportMode('range')}
+            style={{
+              flex: 1,
+              padding: '8px',
+              fontSize: '12px',
+              fontWeight: '700',
+              border: 'none',
+              borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer',
+              backgroundColor: reportMode === 'range' ? 'var(--primary)' : 'transparent',
+              color: reportMode === 'range' ? '#fff' : 'var(--text-secondary)'
+            }}
+          >
+            Período (Intervalo)
+          </button>
+        </div>
+
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <button onClick={prevMonth} className="qty-btn" style={{ width: '32px', height: '32px' }}>&lt;</button>
           <span style={{ fontWeight: '700', fontSize: '15px', color: 'var(--text-primary)' }}>
@@ -3288,13 +3826,15 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
           {daysArray.map((day, idx) => {
             if (day === null) return <div key={`empty-${idx}`}></div>;
-            
+
             const year = currentMonth.getFullYear();
             const month = String(currentMonth.getMonth() + 1).padStart(2, '0');
             const dateDay = String(day).padStart(2, '0');
             const formattedDate = `${year}-${month}-${dateDay}`;
 
-            const isSelected = selectedDate === formattedDate;
+            const isSelected = reportMode === 'single'
+              ? startDate === formattedDate
+              : (formattedDate >= startDate && formattedDate <= endDate);
             const isToday = new Date().toISOString().split('T')[0] === formattedDate;
 
             const hasSales = sales.some(s => s.timestamp.split('T')[0] === formattedDate);
@@ -3303,7 +3843,7 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
             return (
               <button
                 key={day}
-                onClick={() => setSelectedDate(formattedDate)}
+                onClick={() => handleDayClick(formattedDate)}
                 style={{
                   height: '38px',
                   display: 'flex',
@@ -3338,21 +3878,57 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
           })}
         </div>
 
-        <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-          <label className="input-label" style={{ fontSize: '12px' }}>Ou escolha no calendário do sistema:</label>
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => {
-              if (e.target.value) {
-                setSelectedDate(e.target.value);
-                setCurrentMonth(new Date(e.target.value));
-              }
-            }}
-            className="input-field"
-            style={{ padding: '8px 12px', height: '38px', fontSize: '13px' }}
-          />
-        </div>
+        {reportMode === 'single' ? (
+          <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+            <label className="input-label" style={{ fontSize: '12px' }}>Ou escolha no calendário do sistema:</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setStartDate(e.target.value);
+                  setEndDate(e.target.value);
+                  setCurrentMonth(new Date(e.target.value));
+                }
+              }}
+              className="input-field"
+              style={{ padding: '8px 12px', height: '38px', fontSize: '13px' }}
+            />
+          </div>
+        ) : (
+          <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div>
+                <label className="input-label" style={{ fontSize: '11px', marginBottom: '4px' }}>Data Inicial:</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setStartDate(e.target.value);
+                    }
+                  }}
+                  className="input-field"
+                  style={{ padding: '6px 8px', fontSize: '12px', height: '36px' }}
+                />
+              </div>
+              <div>
+                <label className="input-label" style={{ fontSize: '11px', marginBottom: '4px' }}>Data Final:</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setEndDate(e.target.value);
+                    }
+                  }}
+                  className="input-field"
+                  style={{ padding: '6px 8px', fontSize: '12px', height: '36px' }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Lado Direito: Relatório do Dia */}
@@ -3360,7 +3936,10 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
         <div className="section-card">
           <div className="card-header">
             <h3 className="card-title">
-              Relatório Diário — {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+              {reportMode === 'single'
+                ? `Relatório Diário — ${new Date(startDate + 'T00:00:00').toLocaleDateString('pt-BR')}`
+                : `Relatório de Período — ${new Date(startDate + 'T00:00:00').toLocaleDateString('pt-BR')} até ${new Date(endDate + 'T00:00:00').toLocaleDateString('pt-BR')}`
+              }
             </h3>
           </div>
 
@@ -3415,6 +3994,52 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
                 R$ {closingCash.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </strong>
             </div>
+          </div>
+        </div>
+
+        {/* Relatório de Meios de Pagamento */}
+        <div className="section-card">
+          <div className="card-header" style={{ marginBottom: '12px' }}>
+            <h3 className="card-title">Faturamento por Meio de Pagamento</h3>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {/* Pix */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Smartphone size={16} style={{ color: '#3b82f6' }} />
+                <span style={{ fontSize: '13px', fontWeight: '600' }}>Pix</span>
+              </div>
+              <strong style={{ fontSize: '14px', color: '#3b82f6' }}>R$ {pixAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+            </div>
+
+            {/* Dinheiro */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Coins size={16} style={{ color: 'var(--success)' }} />
+                <span style={{ fontSize: '13px', fontWeight: '600' }}>Dinheiro</span>
+              </div>
+              <strong style={{ fontSize: '14px', color: 'var(--success)' }}>R$ {cashAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+            </div>
+
+            {/* Cartões */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <CreditCard size={16} style={{ color: 'var(--brand-yellow)' }} />
+                <span style={{ fontSize: '13px', fontWeight: '600' }}>Cartões (Crédito/Débito)</span>
+              </div>
+              <strong style={{ fontSize: '14px', color: 'var(--brand-yellow)' }}>R$ {cardAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+            </div>
+
+            {/* Outros */}
+            {otherAmount > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Info size={16} style={{ color: 'var(--text-secondary)' }} />
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Outros</span>
+                </div>
+                <strong style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>R$ {otherAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+              </div>
+            )}
           </div>
         </div>
 
@@ -3492,14 +4117,15 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
 function ReceiptModal({ receipt, onClose }) {
   if (!receipt) return null;
 
-  const total = receipt.items.reduce((sum, item) => sum + item.salePrice * item.quantity, 0);
-  const change = receipt.paymentMethod === 'Dinheiro' && receipt.amountPaid > total 
-    ? receipt.amountPaid - total 
+  const subtotal = receipt.items.reduce((sum, item) => sum + item.salePrice * item.quantity, 0);
+  const total = Math.max(0, subtotal - (receipt.discount || 0));
+  const change = receipt.paymentMethod === 'Dinheiro' && receipt.amountPaid > total
+    ? receipt.amountPaid - total
     : 0;
 
   const handlePrint = () => {
     const printContent = document.getElementById('thermal-receipt-print-area').innerHTML;
-    
+
     // Abrir uma janela de impressão limpa
     const printWindow = window.open('', '_blank', 'width=350,height=600');
     printWindow.document.write(`
@@ -3549,7 +4175,7 @@ function ReceiptModal({ receipt, onClose }) {
 
         <div className="modal-body" style={{ maxHeight: '420px', overflowY: 'auto', padding: '10px 0' }}>
           {/* Bobina Térmica Simulada */}
-          <div 
+          <div
             id="thermal-receipt-print-area"
             style={{
               backgroundColor: '#fffcf5',
@@ -3566,18 +4192,18 @@ function ReceiptModal({ receipt, onClose }) {
               <img src={window.location.origin + "/logo.png"} alt="Novo Lar Logo" style={{ maxWidth: '140px', height: 'auto', display: 'block', margin: '0 auto' }} />
             </div>
             <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>NOVO LAR CASA & CONSTRUÇÃO</div>
-            <div style={{ textAlign: 'center', fontSize: '11px', color: '#666', marginTop: '2px' }}>LOJA MATRIZ - CNPJ: 12.345.678/0001-90</div>
-            <div style={{ textAlign: 'center', fontSize: '11px', color: '#666' }}>Rua das Ferramentas, 100 - Centro</div>
-            
+            <div style={{ textAlign: 'center', fontSize: '11px', color: '#666', marginTop: '2px' }}>LOJA MATRIZ - CNPJ: 62.002.153/0001-25</div>
+            <div style={{ textAlign: 'center', fontSize: '11px', color: '#666' }}>Rua das Rosas, 1077 - Jardim Novo Eden</div>
+
             <div style={{ borderTop: '1px dashed #ccc', margin: '10px 0' }}></div>
-            
+
             <div><strong>CUPOM NÃO FISCAL - VENDA #{receipt.id}</strong></div>
             <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
               Data: {new Date(receipt.timestamp).toLocaleString('pt-BR')}
             </div>
-            
+
             <div style={{ borderTop: '1px dashed #ccc', margin: '10px 0' }}></div>
-            
+
             {/* Itens */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {receipt.items.map((item, idx) => (
@@ -3590,11 +4216,23 @@ function ReceiptModal({ receipt, onClose }) {
                 </div>
               ))}
             </div>
-            
+
             <div style={{ borderTop: '1px dashed #ccc', margin: '10px 0' }}></div>
-            
+
             {/* Totais */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {receipt.discount > 0 && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                    <span>Subtotal:</span>
+                    <span>R$ {subtotal.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#16a34a' }}>
+                    <span>Desconto:</span>
+                    <span>- R$ {receipt.discount.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px' }}>
                 <span>TOTAL</span>
                 <span>R$ {total.toFixed(2)}</span>
@@ -3616,9 +4254,9 @@ function ReceiptModal({ receipt, onClose }) {
                 </>
               )}
             </div>
-            
+
             <div style={{ borderTop: '1px dashed #ccc', margin: '10px 0' }}></div>
-            
+
             <div style={{ textAlign: 'center', fontSize: '11px', fontStyle: 'italic', color: '#666' }}>
               Obrigado pela preferência!<br />Volte sempre!
             </div>
@@ -3626,17 +4264,17 @@ function ReceiptModal({ receipt, onClose }) {
         </div>
 
         <div className="modal-footer" style={{ display: 'flex', gap: '8px', width: '100%' }}>
-          <button 
-            type="button" 
-            className="btn-secondary" 
-            style={{ flex: 1 }} 
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ flex: 1 }}
             onClick={onClose}
           >
             Fechar
           </button>
-          <button 
-            type="button" 
-            className="btn-primary" 
+          <button
+            type="button"
+            className="btn-primary"
             style={{ flex: 1.5, gap: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             onClick={handlePrint}
           >
@@ -3661,8 +4299,8 @@ function AIAssistantView({ products, sales, expenses }) {
   const [saveStatus, setSaveStatus] = useState('');
 
   const [messages, setMessages] = useState([
-    { 
-      sender: 'ai', 
+    {
+      sender: 'ai',
       text: 'Olá! Sou o **Novo Lar Copilot**, a inteligência comercial dedicada para o seu depósito de materiais de construção.\n\nAnalisei seu estoque, custos e histórico de vendas. O que você gostaria de saber?\n\n* **Quais produtos trazem mais lucro para a loja?**\n* **O que preciso comprar para repor o estoque hoje?**\n* **Quais itens estão parados (encalhados)?**\n* **Ideias para aumentar as vendas com ofertas combinadas.**\n\n*💡 Para ativar a inteligência real capaz de responder qualquer pergunta livre, insira sua chave da API do Gemini clicando no ícone de engrenagem no topo do chat.*',
       timestamp: new Date()
     }
@@ -3696,16 +4334,16 @@ function AIAssistantView({ products, sales, expenses }) {
 
   // Lógica de análise de categorias para uma loja de materiais de construção
   const categoriesList = ['Materiais Básicos', 'Hidráulica', 'Elétrica', 'Tintas', 'Acabamento', 'Ferragens'];
-  
+
   const categoryStats = categoriesList.map(cat => {
     const catProducts = products.filter(p => p.category === cat);
     const total = catProducts.length;
     if (total === 0) return { category: cat, total: 0, critical: 0, health: 0, class: 'warning', label: 'Sem Cadastro' };
-    
-    const critical = catProducts.filter(p => p.stock <= p.minStock).length;
+
+    const critical = catProducts.filter(p => getProductStock(p) <= p.minStock).length;
     const goodCount = total - critical;
     const health = Math.round((goodCount / total) * 100);
-    
+
     let statusClass = 'good';
     let statusLabel = 'Saudável';
     if (health < 40) {
@@ -3715,7 +4353,7 @@ function AIAssistantView({ products, sales, expenses }) {
       statusClass = 'warning';
       statusLabel = 'Atenção';
     }
-    
+
     return {
       category: cat,
       total,
@@ -3760,13 +4398,13 @@ function AIAssistantView({ products, sales, expenses }) {
     .sort((a, b) => a.qtySold - b.qtySold)
     .slice(0, 5);
 
-  const emAlertaEstoque = productListWithSales.filter(p => p.stock <= p.minStock);
-  
+  const emAlertaEstoque = productListWithSales.filter(p => getProductStock(p) <= p.minStock);
+
   const recomendacoesReposicao = emAlertaEstoque.map(p => {
     const priorityScore = p.unitProfit * (p.qtySold + 1);
     let priorityLabel = 'Baixa';
     let priorityClass = 'low';
-    
+
     if (priorityScore >= 30 || (p.qtySold > 10 && p.unitProfit > 5)) {
       priorityLabel = 'Alta';
       priorityClass = 'high';
@@ -3774,7 +4412,7 @@ function AIAssistantView({ products, sales, expenses }) {
       priorityLabel = 'Média';
       priorityClass = 'medium';
     }
-    
+
     return {
       ...p,
       priorityScore,
@@ -3829,35 +4467,35 @@ Sua tarefa:
 
 Abaixo estão os dados reais do banco de dados da loja em formato JSON:
 ${JSON.stringify({
-  produtos: products.map(p => ({
-    id: p.id,
-    codigo: p.code,
-    nome: p.name,
-    categoria: p.category,
-    estoque: p.stock,
-    estoque_minimo: p.minStock,
-    preco_custo: p.costPrice,
-    preco_venda: p.salePrice,
-    unidade: p.unit
-  })),
-  vendas: sales.map(s => ({
-    id: s.id,
-    data: s.timestamp,
-    loja: s.storeId,
-    total: s.totalPrice,
-    custo: s.totalCost,
-    lucro: s.profit,
-    pagamento: s.paymentMethod,
-    itens: s.items.map(i => ({ nome: i.name, quantidade: i.quantity, preco: i.salePrice }))
-  })),
-  despesas: expenses.map(e => ({
-    id: e.id,
-    data: e.timestamp,
-    descricao: e.description,
-    valor: e.amount,
-    categoria: e.category
-  }))
-}, null, 2)}`;
+        produtos: products.map(p => ({
+          id: p.id,
+          codigo: p.code,
+          nome: p.name,
+          categoria: p.category,
+          estoque: p.stock,
+          estoque_minimo: p.minStock,
+          preco_custo: p.costPrice,
+          preco_venda: p.salePrice,
+          unidade: p.unit
+        })),
+        vendas: sales.map(s => ({
+          id: s.id,
+          data: s.timestamp,
+          loja: s.storeId,
+          total: s.totalPrice,
+          custo: s.totalCost,
+          lucro: s.profit,
+          pagamento: s.paymentMethod,
+          itens: s.items.map(i => ({ nome: i.name, quantidade: i.quantity, preco: i.salePrice }))
+        })),
+        despesas: expenses.map(e => ({
+          id: e.id,
+          data: e.timestamp,
+          descricao: e.description,
+          valor: e.amount,
+          categoria: e.category
+        }))
+      }, null, 2)}`;
 
       try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
@@ -3885,10 +4523,10 @@ ${JSON.stringify({
         setMessages(prev => [...prev, { sender: 'ai', text: replyText, timestamp: new Date() }]);
       } catch (err) {
         console.error("Erro na chamada do Gemini API, usando fallback offline:", err);
-        setMessages(prev => [...prev, { 
-          sender: 'ai', 
-          text: `⚠️ **Erro na conexão com a IA Real (Gemini)**. Houve um problema ao conectar com a sua chave de API. Verifique a internet e a chave. \n\n*Ativando resposta de backup local:*\n\n${getLocalFallbackResponse(question)}`, 
-          timestamp: new Date() 
+        setMessages(prev => [...prev, {
+          sender: 'ai',
+          text: `⚠️ **Erro na conexão com a IA Real (Gemini)**. Houve um problema ao conectar com a sua chave de API. Verifique a internet e a chave. \n\n*Ativando resposta de backup local:*\n\n${getLocalFallbackResponse(question)}`,
+          timestamp: new Date()
         }]);
       } finally {
         setIsTyping(false);
@@ -3906,16 +4544,16 @@ ${JSON.stringify({
   // Algoritmo local offline para gerar respostas pré-programadas baseadas no DB real
   const getLocalFallbackResponse = (question) => {
     const normalizedQuestion = question.toLowerCase();
-    
+
     if (isEstoqueVazio) {
       return 'Atualmente você não possui produtos cadastrados no estoque. Por favor, adicione os produtos na aba de **Administração** primeiro para que eu possa analisar custos e sugerir lucros!';
     }
-    
+
     if (normalizedQuestion.includes('lucro') || normalizedQuestion.includes('lucrativo') || normalizedQuestion.includes('margem')) {
       const sortedByProfit = [...productListWithSales]
         .sort((a, b) => b.unitProfit - a.unitProfit)
         .slice(0, 3);
-      
+
       let text = 'Aqui estão os **3 produtos mais lucrativos** (maior lucro unitário) cadastrados na sua loja:\n\n';
       sortedByProfit.forEach((p, idx) => {
         const margin = p.salePrice > 0 ? ((p.unitProfit / p.salePrice) * 100).toFixed(0) : 0;
@@ -3923,12 +4561,12 @@ ${JSON.stringify({
       });
       text += '💡 **Dica de Construção:** Produtos de acabamento (torneiras) ou elétrica costumam ter margem maior que materiais básicos. Impulsione a venda deles no balcão!';
       return text;
-    } 
+    }
     else if (normalizedQuestion.includes('comprar') || normalizedQuestion.includes('repor') || normalizedQuestion.includes('estoque') || normalizedQuestion.includes('pedido')) {
       if (emAlertaEstoque.length === 0) {
         return 'Parabéns! Todos os produtos da sua loja estão com estoque acima do nível mínimo. **Não há necessidade de reposição urgente** no momento.';
       }
-      
+
       let text = `Identifiquei **${emAlertaEstoque.length} produtos** abaixo do estoque mínimo. Segue a ordem de compras priorizada por margem de lucro e giro:\n\n`;
       const maxPriority = recomendacoesReposicao.filter(r => r.priorityLabel === 'Alta');
       const medPriority = recomendacoesReposicao.filter(r => r.priorityLabel === 'Média');
@@ -3955,7 +4593,7 @@ ${JSON.stringify({
         });
       }
       return text;
-    } 
+    }
     else if (normalizedQuestion.includes('encalhado') || normalizedQuestion.includes('parado') || normalizedQuestion.includes('sem venda') || normalizedQuestion.includes('menos vendem')) {
       const parados = productListWithSales
         .filter(p => p.qtySold === 0 && p.stock > 0)
@@ -3965,21 +4603,21 @@ ${JSON.stringify({
       if (parados.length === 0) {
         return 'Excelente! Todos os produtos cadastrados registraram movimentação de vendas recente.';
       }
-      
+
       let text = 'Identifiquei os seguintes **produtos parados** (sem vendas e com estoque acumulado):\n\n';
       parados.forEach(p => {
         text += `* **${p.name}**\n  * Estoque atual: **${p.stock}** unidades paradas.\n  * Valor de custo parado: **R$ ${(p.stock * p.costPrice).toFixed(2)}**\n\n`;
       });
       text += '📣 **Recomendação da IA:** Crie ofertas do tipo "Combos de Construção". Ex: Na compra de uma lata de Tinta Acrílica, dê 15% de desconto no Rolo de Pintura parado.';
       return text;
-    } 
+    }
     else if (normalizedQuestion.includes('dica') || normalizedQuestion.includes('ideia') || normalizedQuestion.includes('mercado') || normalizedQuestion.includes('aumentar') || normalizedQuestion.includes('vender')) {
       return 'Aqui estão **3 ideias de mercado** focadas para depósitos de materiais de construção:\n\n' +
         '1. **O Combo do Pintor**\n   * Junte **Tinta Coral Branca 18L** com **Rolo de Lã Tigre** e **Fita Isolante** como um pacote promocional de pintura básica. Isso aumenta a saída de acessórios.\n\n' +
         '2. **Incentivo de Caixa para PIX**\n   * Crie um cartaz no balcão: *"3% de desconto em materiais básicos para pagamentos no Pix"*. Como cimento e tijolo têm margem apertada, economizar nas taxas de cartão melhora seu fluxo de caixa.\n\n' +
         '3. **Venda Casada Opcional**\n   * Quem compra **Cimento CP II** geralmente precisa de **Argamassa ACIII** e colheres de pedreiro. Incentive o operador de caixa a perguntar sobre esses materiais complementares a cada venda faturada.';
     }
-    
+
     const totalRev = sales.reduce((sum, s) => sum + s.totalPrice, 0);
     const totalProf = totalRev - sales.reduce((sum, s) => sum + s.totalCost, 0);
 
@@ -4000,7 +4638,7 @@ ${JSON.stringify({
         content = line.trim().slice(2);
         isBullet = true;
       }
-      
+
       const parts = content.split('**');
       const parsedLine = parts.map((part, pIdx) => {
         if (pIdx % 2 === 1) {
@@ -4016,17 +4654,17 @@ ${JSON.stringify({
           </li>
         );
       }
-      
+
       return <div key={idx} style={{ marginBottom: line ? '6px' : '12px' }}>{parsedLine}</div>;
     });
   };
 
   return (
     <div className="ai-assistant-layout" style={{ animation: 'fadeIn 0.3s ease-out' }}>
-      
+
       {/* Coluna da Esquerda: Relatórios e Estatísticas */}
       <div className="ai-assistant-left-col">
-        
+
         {isEstoqueVazio ? (
           /* Estado Onboarding se não houver produtos cadastrados */
           <div className="ai-onboarding-card">
@@ -4061,13 +4699,13 @@ ${JSON.stringify({
                     <div className="category-stock-header">
                       <span>{stat.category}</span>
                       <span className={`category-stock-badge ${stat.class}`}>
-                        {stat.total === 0 ? 'Sem Cadastro' : stat.critical > 0 ? `${stat.critical} em Alerta` : 'Estável'} 
+                        {stat.total === 0 ? 'Sem Cadastro' : stat.critical > 0 ? `${stat.critical} em Alerta` : 'Estável'}
                         {stat.total > 0 && ` (${stat.health}%)`}
                       </span>
                     </div>
                     <div className="category-progress-container">
-                      <div 
-                        className={`category-progress-bar ${stat.class}`} 
+                      <div
+                        className={`category-progress-bar ${stat.class}`}
                         style={{ width: stat.total > 0 ? `${stat.health}%` : '0%' }}
                       ></div>
                     </div>
@@ -4136,7 +4774,7 @@ ${JSON.stringify({
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                
+
                 {/* Mais Vendidos */}
                 <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '12px', borderRadius: 'var(--radius-md)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
@@ -4189,10 +4827,10 @@ ${JSON.stringify({
                   <Sparkles size={16} style={{ color: 'var(--primary)' }} />
                   <span style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-primary)' }}>Diagnóstico Comercial Inteligente (IA)</span>
                 </div>
-                
-                <div className="ai-diagnostic-grid" style={{ 
-                  display: 'grid', 
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+
+                <div className="ai-diagnostic-grid" style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
                   gap: '12px'
                 }}>
                   {/* Card 1: Margem Comercial Média */}
@@ -4355,7 +4993,7 @@ ${JSON.stringify({
 
       {/* Coluna da Direita: Chat Interativo da IA */}
       <div className="ai-chat-card">
-        
+
         {/* Cabeçalho do Chat com botão de Configurações da Chave da API */}
         <div className="ai-chat-header" style={{ justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -4367,9 +5005,9 @@ ${JSON.stringify({
               </span>
             </div>
           </div>
-          <button 
+          <button
             type="button"
-            className="chat-quick-btn" 
+            className="chat-quick-btn"
             style={{ padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '4px' }}
             onClick={() => setIsDrawerOpen(!isDrawerOpen)}
             title="Configurar Chave da API do Gemini"
@@ -4388,8 +5026,8 @@ ${JSON.stringify({
               </a>
             </div>
             <div className="ai-key-drawer-input-group">
-              <input 
-                type="password" 
+              <input
+                type="password"
                 placeholder="Insira sua API Key do Gemini aqui..."
                 value={keyInput}
                 onChange={(e) => setKeyInput(e.target.value)}
@@ -4412,7 +5050,7 @@ ${JSON.stringify({
         <div className="ai-chat-messages">
           {messages.map((msg, idx) => (
             <div key={idx} className="chat-avatar-wrapper" style={{ flexDirection: msg.sender === 'user' ? 'row-reverse' : 'row' }}>
-              
+
               {/* Círculo do Avatar */}
               <div className={`chat-avatar ${msg.sender === 'user' ? 'user' : ''}`}>
                 {msg.sender === 'user' ? 'U' : 'N'}
@@ -4425,11 +5063,11 @@ ${JSON.stringify({
                 </span>
                 <div className={`chat-bubble ${msg.sender}`}>
                   {formatMessageText(msg.text)}
-                  <div style={{ 
-                    fontSize: '9px', 
-                    textAlign: msg.sender === 'user' ? 'right' : 'left', 
-                    opacity: 0.6, 
-                    marginTop: '4px' 
+                  <div style={{
+                    fontSize: '9px',
+                    textAlign: msg.sender === 'user' ? 'right' : 'left',
+                    opacity: 0.6,
+                    marginTop: '4px'
                   }}>
                     {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>
@@ -4458,25 +5096,25 @@ ${JSON.stringify({
 
         {/* Sugestões de Perguntas Rápidas */}
         <div className="chat-quick-questions">
-          <button 
+          <button
             className="chat-quick-btn"
             onClick={() => handleAskAI('Quais produtos trazem mais lucro na loja?')}
           >
             📈 Produtos mais Lucrativos
           </button>
-          <button 
+          <button
             className="chat-quick-btn"
             onClick={() => handleAskAI('O que preciso comprar para repor estoque hoje?')}
           >
             📋 O que Comprar Hoje?
           </button>
-          <button 
+          <button
             className="chat-quick-btn"
             onClick={() => handleAskAI('Quais produtos estão encalhados no estoque?')}
           >
             💤 Produtos Encalhados
           </button>
-          <button 
+          <button
             className="chat-quick-btn"
             onClick={() => handleAskAI('Dicas de mercado para aumentar as vendas')}
           >
@@ -4486,23 +5124,23 @@ ${JSON.stringify({
 
         {/* Campo de Entrada de Texto */}
         <div className="chat-input-area">
-          <form 
+          <form
             onSubmit={(e) => {
               e.preventDefault();
               handleAskAI(inputValue);
-            }} 
+            }}
             className="chat-form"
           >
-            <input 
-              type="text" 
+            <input
+              type="text"
               placeholder="Pergunte ao Assistente IA..."
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               className="chat-input"
               disabled={isTyping}
             />
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="chat-submit-btn"
               disabled={isTyping || !inputValue.trim()}
             >
@@ -4528,7 +5166,7 @@ function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
 
   const filteredDeliveries = deliverySales.filter(s => {
     const matchesStatus = filterStatus === 'Todas' || s.deliveryDetails.status === filterStatus;
-    const matchesSearch = 
+    const matchesSearch =
       s.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (s.deliveryDetails.receiver && s.deliveryDetails.receiver.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (s.deliveryDetails.address && s.deliveryDetails.address.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -4542,13 +5180,13 @@ function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
           <Truck size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
           Painel de Controle de Entregas
         </h2>
-        
+
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', flex: '1', justifyContent: 'flex-end', maxWidth: '600px' }}>
           <div className="input-group" style={{ maxWidth: '250px', width: '100%' }}>
             <Search className="input-icon" size={18} />
-            <input 
-              type="text" 
-              className="input-field" 
+            <input
+              type="text"
+              className="input-field"
               style={{ padding: '8px 12px 8px 36px', fontSize: '13px' }}
               placeholder="Buscar por ID, recebedor..."
               value={searchTerm}
@@ -4574,7 +5212,7 @@ function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
                   transition: 'all 0.2s'
                 }}
               >
-                {status === 'Todas' ? 'Todas' : (status === 'Pendente' ? 'Pendentes 🕒' : 'Entregues ✅')}
+                {status === 'Todas' ? 'Todas' : (status === 'Pendente' ? 'Pendentes ' : 'Entregues ')}
               </button>
             ))}
           </div>
@@ -4603,8 +5241,8 @@ function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
             <tbody>
               {filteredDeliveries.map(sale => {
                 const det = sale.deliveryDetails;
-                const formattedDate = det.date 
-                  ? new Date(det.date + 'T00:00:00').toLocaleDateString('pt-BR') 
+                const formattedDate = det.date
+                  ? new Date(det.date + 'T00:00:00').toLocaleDateString('pt-BR')
                   : 'Não especificada';
 
                 return (
@@ -4687,13 +5325,13 @@ function InvoiceModal({ sale, onClose }) {
   const total = sale.totalPrice;
   const cnpj = "62.002.153/0001-25";
   const dateFormatted = new Date(sale.timestamp).toLocaleString('pt-BR');
-  
+
   // Chave de acesso simulada para dar mais realismo
   const accessKey = Array.from({ length: 11 }, () => Math.floor(Math.random() * 9000 + 1000).toString()).join(' ');
 
   const handlePrint = () => {
     const printContent = document.getElementById('danfe-invoice-print-area').innerHTML;
-    
+
     const printWindow = window.open('', '_blank', 'width=800,height=800');
     printWindow.document.write(`
       <html>
@@ -4806,10 +5444,10 @@ function InvoiceModal({ sale, onClose }) {
               <tbody>
                 <tr>
                   <td style={{ width: '18%', border: '1px solid #000', padding: '6px', textAlign: 'center', verticalAlign: 'middle' }}>
-                    <img 
-                      src={window.location.origin + "/logo.png"} 
-                      alt="Logo Novo Lar" 
-                      style={{ maxWidth: '80px', height: 'auto', display: 'block', margin: '0 auto' }} 
+                    <img
+                      src={window.location.origin + "/logo.png"}
+                      alt="Logo Novo Lar"
+                      style={{ maxWidth: '80px', height: 'auto', display: 'block', margin: '0 auto' }}
                     />
                   </td>
                   <td style={{ width: '47%', border: '1px solid #000', padding: '6px', verticalAlign: 'top' }}>
@@ -4937,17 +5575,17 @@ function ClosureModal({ date, sales, expenses, storeId, onClose, onSave }) {
   const totalCashSales = daySales.filter(s => s.paymentMethod === 'Dinheiro').reduce((acc, s) => acc + s.totalPrice, 0);
   const totalPixSales = daySales.filter(s => s.paymentMethod === 'Pix').reduce((acc, s) => acc + s.totalPrice, 0);
   const totalCardSales = daySales.filter(s => s.paymentMethod.includes('Cartão')).reduce((acc, s) => acc + s.totalPrice, 0);
-  
+
   const totalExpenses = dayExpenses.reduce((acc, e) => acc + e.amount, 0);
 
   // O "dinheiro em caixa esperado" normalmente é: Vendas em Dinheiro - Despesas pagas no dia
   // Assumindo que despesas saem do caixa de dinheiro físico:
   const expectedCash = totalCashSales - totalExpenses;
-  
+
   const handleSave = () => {
     const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;
     const diff = cashVal - expectedCash;
-    
+
     onSave({
       storeId,
       date: dateStr,
@@ -4991,12 +5629,12 @@ function ClosureModal({ date, sales, expenses, storeId, onClose, onSave }) {
             <span style={{ color: 'var(--text-muted)' }}>- Cartão:</span>
             <span style={{ color: 'var(--text-secondary)' }}>R$ {totalCardSales.toFixed(2)}</span>
           </div>
-          
+
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '13px' }}>
             <span style={{ color: 'var(--text-secondary)' }}>Despesas (Retiradas):</span>
             <span style={{ fontWeight: '700', color: 'var(--danger)' }}>- R$ {totalExpenses.toFixed(2)}</span>
           </div>
-          
+
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-color)', fontSize: '15px' }}>
             <span style={{ fontWeight: '800' }}>Dinheiro Esperado em Gaveta:</span>
             <span style={{ fontWeight: '800', color: 'var(--primary)' }}>R$ {expectedCash.toFixed(2)}</span>
@@ -5005,12 +5643,12 @@ function ClosureModal({ date, sales, expenses, storeId, onClose, onSave }) {
 
         <div className="form-group" style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Valor em Dinheiro Físico (R$)</label>
-          <input 
-            type="number" 
-            step="0.01" 
-            className="form-input" 
-            placeholder="0.00" 
-            value={actualCash} 
+          <input
+            type="number"
+            step="0.01"
+            className="form-input"
+            placeholder="0.00"
+            value={actualCash}
             onChange={(e) => setActualCash(e.target.value)}
             style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
           />
@@ -5025,10 +5663,10 @@ function ClosureModal({ date, sales, expenses, storeId, onClose, onSave }) {
 
         <div className="form-group" style={{ marginBottom: '24px' }}>
           <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Observações (Opcional)</label>
-          <textarea 
-            className="form-input" 
+          <textarea
+            className="form-input"
             rows="2"
-            value={observations} 
+            value={observations}
             onChange={(e) => setObservations(e.target.value)}
             style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff', resize: 'vertical' }}
           ></textarea>
