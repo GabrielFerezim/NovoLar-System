@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "electron:dev": "electron . --dev",
     "electron:prod": "electron .",
-    "start": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron:dev\"",
+    "start": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5199 && npm run electron:dev\"",
     "dist": "npm run build && electron-packager . ConstruControl --platform=win32 --arch=x64 --out=dist-electron --overwrite",
     "pack": "npm run build && electron-packager . ConstruControl --platform=win32 --arch=x64 --out=dist-electron --overwrite"
   },

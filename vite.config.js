@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   base: './', // Necessário para carregar arquivos locais com protocolo file:// no Electron
   server: {
-    port: 5173
+    port: 5199,
+    strictPort: true
   }
 });

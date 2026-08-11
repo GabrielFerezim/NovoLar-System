@@ -3,27 +3,13 @@ import { supabase } from './supabase';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
-// Mock inicial para caso rode no navegador (fallback se não houver conexão de primeira)
 const initialMockData = {
-  products: [
-    { id: "1", code: "7891000100101", name: "Cimento CP II Mauá 50kg", description: "Cimento Portland composto, ideal para obras em geral.", costPrice: 28.50, salePrice: 38.90, stock: 150, minStock: 20, category: "Materiais Básicos", unit: "Saco" },
-    { id: "2", code: "7891000100102", name: "Tijolo Baiano 8 Furos 9x19x19cm", description: "Tijolo cerâmico para vedação, excelente rendimento.", costPrice: 0.85, salePrice: 1.45, stock: 2400, minStock: 500, category: "Materiais Básicos", unit: "Milheiro" },
-    { id: "3", code: "7891000100103", name: "Tubo PVC Esgoto 100mm 6m Tigre", description: "Tubo de PVC para condução de efluentes sanitários.", costPrice: 42.00, salePrice: 65.00, stock: 12, minStock: 15, category: "Hidráulica", unit: "Barra" },
-    { id: "4", code: "7891000100104", name: "Fio Rígido Flexível 2.5mm² Azul 100m Cobrecom", description: "Cabo flexível azul de 2.5mm, ideal para instalações elétricas internas.", costPrice: 110.00, salePrice: 169.90, stock: 8, minStock: 10, category: "Elétrica", unit: "Rolo" },
-    { id: "5", code: "7891000100105", name: "Argamassa ACIII 20kg Quartzolit", description: "Argamassa de alta aderência para assentamento de cerâmicas e porcelanatos.", costPrice: 18.20, salePrice: 27.50, stock: 65, minStock: 15, category: "Materiais Básicos", unit: "Saco" },
-    { id: "6", code: "7891000100106", name: "Torneira de Parede para Cozinha Metal Deca", description: "Torneira com bica móvel e mecanismo de 1/4 de volta.", costPrice: 75.00, salePrice: 120.00, stock: 15, minStock: 5, category: "Acabamento", unit: "Unidade" },
-    { id: "7", code: "7891000100107", name: "Parafuso Sextavado Zincado 1/4 x 3/4", description: "Parafuso sextavado para fixações em metal e madeira.", costPrice: 0.15, salePrice: 0.35, stock: 850, minStock: 100, category: "Ferragens", unit: "Cento" },
-    { id: "8", code: "7891000100108", name: "Pintura Tinta Acrílica Fosca Rende Muito Branco 18L Coral", description: "Tinta acrílica de alto rendimento na cor branca, acabamento fosco.", costPrice: 210.00, salePrice: 329.00, stock: 4, minStock: 6, category: "Tintas", unit: "Lata" },
-    { id: "9", code: "7891000100109", name: "Adesivo Plástico Cola para PVC 175g Tigre", description: "Adesivo plástico para união de tubos e conexões de PVC.", costPrice: 7.20, salePrice: 12.90, stock: 35, minStock: 5, category: "Hidráulica", unit: "Bisnaga" },
-    { id: "10", code: "7891000100110", name: "Fita Isolante Imperial 3M 10m", description: "Fita isolante de PVC antichama, excelente flexibilidade.", costPrice: 2.10, salePrice: 4.80, stock: 60, minStock: 10, category: "Elétrica", unit: "Rolo" },
-    { id: "11", code: "7891000100111", name: "Rolo de Lã para Pintura Tigre 23cm", description: "Rolo de lã de carneiro para aplicação de tintas acrílicas.", costPrice: 12.00, salePrice: 22.50, stock: 18, minStock: 3, category: "Tintas", unit: "Unidade" },
-    { id: "12", code: "7891000100112", name: "Fita Veda Rosca 18mm x 10m Tigre", description: "Fita veda rosca para vedação de juntas roscáveis.", costPrice: 1.50, salePrice: 3.50, stock: 120, minStock: 15, category: "Hidráulica", unit: "Rolo" }
-  ],
+  products: [],
   sales: [],
   expenses: [],
-  closures: [], // Fechamentos de caixa
-  syncQueue: [], // Fila de sincronização offline
-  creditAccounts: [] // Contas a receber (fiados/marcados)
+  closures: [],
+  syncQueue: [],
+  creditAccounts: []
 };
 
 // --- CONTROLE DE ID DA LOJA ---
