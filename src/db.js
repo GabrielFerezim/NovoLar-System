@@ -159,6 +159,7 @@ export async function syncAllFromCloud() {
       paymentMethod: s.payment_method,
       storeId: s.store_id,
       items: s.items,
+      deliveryDetails: s.delivery_details || null,
       synced: true
     }));
 
@@ -311,6 +312,8 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
   let totalCost = 0;
   let totalPrice = 0;
   
+  const currentStore = getStoreId();
+
   const saleProducts = saleItems.map(item => {
     const originalProduct = db.products.find(p => p.id === item.id);
     const itemCost = originalProduct ? originalProduct.costPrice : item.costPrice || 0;
@@ -318,9 +321,14 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
     totalCost += itemCost * item.quantity;
     totalPrice += item.salePrice * item.quantity;
     
-    // Atualizar estoque no banco local
+    // Atualizar estoque no banco local (específico por loja)
     if (originalProduct) {
-      originalProduct.stock = Math.max(0, originalProduct.stock - item.quantity);
+      if (currentStore === 'loja-2') {
+        originalProduct.stockLoja2 = Math.max(0, (originalProduct.stockLoja2 ?? 0) - item.quantity);
+      } else {
+        originalProduct.stockLoja1 = Math.max(0, (originalProduct.stockLoja1 ?? originalProduct.stock ?? 0) - item.quantity);
+      }
+      originalProduct.stock = (originalProduct.stockLoja1 ?? 0) + (originalProduct.stockLoja2 ?? 0);
     }
     
     return {
@@ -342,7 +350,7 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
     totalCost: parseFloat(totalCost.toFixed(2)),
     profit: parseFloat((finalTotalPrice - totalCost).toFixed(2)),
     paymentMethod,
-    storeId: getStoreId(),
+    storeId: currentStore,
     deliveryDetails,
     synced: false
   };
@@ -359,18 +367,25 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
       total_cost: newSale.totalCost,
       profit: newSale.profit,
       payment_method: newSale.paymentMethod,
-      store_id: getStoreId(),
-      items: newSale.items
+      store_id: currentStore,
+      items: newSale.items,
+      delivery_details: newSale.deliveryDetails
     });
     
     if (error) throw error;
     
-    // Se deu certo, atualiza o estoque físico dos produtos na nuvem também
+    // Se deu certo, atualiza o estoque físico dos produtos na nuvem com o split correto
     for (const item of saleItems) {
       const originalProduct = db.products.find(p => p.id === item.id);
       if (originalProduct) {
+        const stock1 = originalProduct.stockLoja1 ?? originalProduct.stock ?? 0;
+        const stock2 = originalProduct.stockLoja2 ?? 0;
+        const cleanDesc = (originalProduct.description || '').replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+        const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
+
         await supabase.from('products').update({
-          stock: originalProduct.stock
+          stock: originalProduct.stock,
+          description: supabaseDesc
         }).eq('id', item.id);
       }
     }
@@ -399,6 +414,22 @@ export async function updateSaleDeliveryStatus(saleId, status, deliveredAt = nul
     db.sales[idx].deliveryDetails.deliveredAt = deliveredAt;
     db.sales[idx].synced = false;
     await saveDB(db);
+
+    // Tentar enviar atualização para a nuvem
+    try {
+      const { error } = await supabase
+        .from('sales')
+        .update({ delivery_details: db.sales[idx].deliveryDetails })
+        .eq('id', saleId);
+      
+      if (error) throw error;
+
+      db.sales[idx].synced = true;
+      await saveDB(db);
+    } catch (err) {
+      console.warn("Erro ao atualizar status de entrega no Supabase (offline):", err);
+      await addToSyncQueue('sale', saleId);
+    }
   }
   return db.sales;
 }
@@ -652,23 +683,32 @@ export async function runBackgroundSync() {
       else if (job.type === 'sale') {
         const sale = db.sales.find(s => s.id === job.recordId);
         if (sale) {
-          const { error } = await supabase.from('sales').insert({
+          const { error } = await supabase.from('sales').upsert({
             id: sale.id,
             timestamp: sale.timestamp,
             total_price: sale.totalPrice,
             total_cost: sale.totalCost,
             profit: sale.profit,
             payment_method: sale.paymentMethod,
-            store_id: getStoreId(),
-            items: sale.items
+            store_id: sale.storeId || getStoreId(),
+            items: sale.items,
+            delivery_details: sale.deliveryDetails
           });
           if (error) throw error;
           
-          // Atualiza estoques na nuvem
+          // Atualiza estoques na nuvem com o split correto
           for (const item of sale.items) {
             const prod = db.products.find(p => p.id === item.productId);
             if (prod) {
-              await supabase.from('products').update({ stock: prod.stock }).eq('id', prod.id);
+              const stock1 = prod.stockLoja1 ?? prod.stock ?? 0;
+              const stock2 = prod.stockLoja2 ?? 0;
+              const cleanDesc = (prod.description || '').replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
+              const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
+
+              await supabase.from('products').update({
+                stock: prod.stock,
+                description: supabaseDesc
+              }).eq('id', prod.id);
             }
           }
           processedSales.push(sale.id);
@@ -677,13 +717,13 @@ export async function runBackgroundSync() {
       else if (job.type === 'expense') {
         const exp = db.expenses.find(e => e.id === job.recordId);
         if (exp) {
-          const { error } = await supabase.from('expenses').insert({
+          const { error } = await supabase.from('expenses').upsert({
             id: exp.id,
             timestamp: exp.timestamp,
             description: exp.description,
             amount: exp.amount,
             category: exp.category,
-            store_id: getStoreId()
+            store_id: exp.storeId || getStoreId()
           });
           if (error) throw error;
           processedExpenses.push(exp.id);

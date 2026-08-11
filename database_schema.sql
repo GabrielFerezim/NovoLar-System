@@ -25,8 +25,12 @@ CREATE TABLE IF NOT EXISTS sales (
     profit NUMERIC(10, 2) NOT NULL,
     payment_method TEXT NOT NULL,
     store_id TEXT NOT NULL, -- Identifica de qual loja veio a venda (ex: loja-1, loja-2)
-    items JSONB NOT NULL   -- Armazena os itens vendidos de forma simples e segura
+    items JSONB NOT NULL,   -- Armazena os itens vendidos de forma simples e segura
+    delivery_details JSONB  -- Armazena detalhes e status de entrega (Pendente, Entregue, etc.)
 );
+
+-- CASO JÁ TENHA A TABELA CRIADA, EXECUTE ESTA LINHA:
+-- ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_details JSONB;
 
 -- 3. Tabela de Despesas
 CREATE TABLE IF NOT EXISTS expenses (
