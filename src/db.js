@@ -162,41 +162,44 @@ export async function syncAllFromCloud() {
         cleanDescription = rawDesc.replace(/\s\[STOCKS:\d+\|\d+\]$/, '');
       }
       return {
-        id: cp.id,
-        code: cp.code,
+        id: String(cp.id),
+        code: String(cp.code || ''),
         name: cp.name,
         description: cleanDescription,
-        costPrice: parseFloat(cp.cost_price),
-        salePrice: parseFloat(cp.sale_price),
+        costPrice: parseFloat(cp.cost_price) || 0,
+        salePrice: parseFloat(cp.sale_price) || 0,
         stockLoja1,
         stockLoja2,
         stock: stockLoja1 + stockLoja2,
-        minStock: cp.min_stock,
-        category: cp.category,
-        unit: cp.unit
+        minStock: parseInt(cp.min_stock) || 0,
+        category: cp.category || 'Materiais Básicos',
+        unit: cp.unit || 'Unidade'
       };
     });
 
     // Transformar vendas
     const sales = (cloudSales || []).map(s => ({
-      id: s.id,
+      id: String(s.id),
       timestamp: s.timestamp,
-      totalPrice: parseFloat(s.total_price),
-      totalCost: parseFloat(s.total_cost),
-      profit: parseFloat(s.profit),
+      totalPrice: parseFloat(s.total_price) || 0,
+      totalCost: parseFloat(s.total_cost) || 0,
+      profit: parseFloat(s.profit) || 0,
       paymentMethod: s.payment_method,
       storeId: s.store_id,
-      items: s.items,
+      items: (s.items || []).map(item => ({
+        ...item,
+        productId: String(item.productId || item.id || '')
+      })),
       deliveryDetails: s.delivery_details || null,
       synced: true
     }));
 
     // Transformar despesas
     const expenses = (cloudExpenses || []).map(e => ({
-      id: e.id,
+      id: String(e.id),
       timestamp: e.timestamp,
       description: e.description,
-      amount: parseFloat(e.amount),
+      amount: parseFloat(e.amount) || 0,
       category: e.category,
       storeId: e.store_id,
       synced: true
@@ -204,19 +207,19 @@ export async function syncAllFromCloud() {
 
     // Transformar fechamentos
     const closures = (cloudClosures || []).map(c => ({
-      id: c.id,
+      id: String(c.id),
       storeId: c.store_id,
       date: c.date,
       closedAt: c.closed_at,
-      expectedCash: parseFloat(c.expected_cash),
-      actualCash: parseFloat(c.actual_cash),
-      difference: parseFloat(c.difference),
+      expectedCash: parseFloat(c.expected_cash) || 0,
+      actualCash: parseFloat(c.actual_cash) || 0,
+      difference: parseFloat(c.difference) || 0,
       observations: c.observations
     }));
 
     // Transformar fiados
     const creditAccounts = (cloudAccounts || []).map(ca => ({
-      id: ca.id,
+      id: String(ca.id),
       name: ca.name,
       address: ca.address || '',
       phone: ca.phone || '',
@@ -226,13 +229,13 @@ export async function syncAllFromCloud() {
 
     // Mesclar: cloud é a verdade, mas mantemos itens locais pendentes de sync
     const localOnlyProducts = (localDb.products || []).filter(
-      lp => !products.find(p => p.id === lp.id)
+      lp => !products.find(p => String(p.id) === String(lp.id))
     );
     const localOnlySales = (localDb.sales || []).filter(
-      ls => !ls.synced && !sales.find(s => s.id === ls.id)
+      ls => !ls.synced && !sales.find(s => String(s.id) === String(ls.id))
     );
     const localOnlyExpenses = (localDb.expenses || []).filter(
-      le => !le.synced && !expenses.find(e => e.id === le.id)
+      le => !le.synced && !expenses.find(e => String(e.id) === String(le.id))
     );
 
     const mergedDb = {
@@ -569,7 +572,8 @@ export async function runBackgroundSync() {
         const merged = [...localProducts];
         
         cloudProducts.forEach(cp => {
-          const idx = merged.findIndex(p => p.id === cp.id);
+          const cpId = String(cp.id);
+          const idx = merged.findIndex(p => String(p.id) === cpId);
           
           const rawDesc = cp.description || '';
           const match = rawDesc.match(/\s\[STOCKS:(\d+)\|(\d+)\]$/);
@@ -584,18 +588,18 @@ export async function runBackgroundSync() {
           }
 
           const cpTransformed = {
-            id: cp.id,
-            code: cp.code,
+            id: cpId,
+            code: String(cp.code || ''),
             name: cp.name,
             description: cleanDescription,
-            costPrice: parseFloat(cp.cost_price),
-            salePrice: parseFloat(cp.sale_price),
+            costPrice: parseFloat(cp.cost_price) || 0,
+            salePrice: parseFloat(cp.sale_price) || 0,
             stockLoja1,
             stockLoja2,
             stock: stockLoja1 + stockLoja2,
-            minStock: cp.min_stock,
-            category: cp.category,
-            unit: cp.unit
+            minStock: parseInt(cp.min_stock) || 0,
+            category: cp.category || 'Materiais Básicos',
+            unit: cp.unit || 'Unidade'
           };
           
           if (idx !== -1) {
@@ -621,9 +625,10 @@ export async function runBackgroundSync() {
 
             // 1. Mesclar contas da nuvem que não existem localmente
             cloudAccounts.forEach(ca => {
-              const idx = mergedAccounts.findIndex(a => a.id === ca.id);
+              const caId = String(ca.id);
+              const idx = mergedAccounts.findIndex(a => String(a.id) === caId);
               const cloudAccount = {
-                id: ca.id,
+                id: caId,
                 name: ca.name,
                 address: ca.address || '',
                 phone: ca.phone || '',

@@ -312,6 +312,8 @@ export default function App() {
       if (res.status === 'success' || res.status === 'syncing') {
         setSyncStatus('Sincronizado');
         setProducts(db.products || []);
+        setSales(db.sales || []);
+        setExpenses(db.expenses || []);
         setCreditAccounts(db.creditAccounts || []);
       } else if (res.status === 'error') {
         setSyncStatus(res.message);
@@ -441,10 +443,11 @@ export default function App() {
   };
 
   const updateCartQty = (productId, delta) => {
-    const product = products.find(p => p.id === productId);
+    const pIdStr = String(productId);
+    const product = products.find(p => String(p.id) === pIdStr);
     setCart(prevCart => {
       return prevCart.map(item => {
-        if (item.id === productId) {
+        if (String(item.id) === pIdStr) {
           const newQty = item.quantity + delta;
           if (newQty <= 0) return null;
           if (product && newQty > product.stock) {
