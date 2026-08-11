@@ -54,3 +54,17 @@ CREATE TABLE IF NOT EXISTS closures (
     observations TEXT
 );
 ALTER TABLE closures DISABLE ROW LEVEL SECURITY;
+
+-- 6. Tabela de Contas de Fiado / Marcados
+-- EXECUTE ESTE BLOCO NO SUPABASE PARA HABILITAR A SINCRONIZAÇÃO DOS FIADOS
+CREATE TABLE IF NOT EXISTS credit_accounts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    address TEXT,
+    phone TEXT,
+    balance NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    history JSONB NOT NULL DEFAULT '[]'::jsonb, -- Histórico completo de transações em JSON
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE credit_accounts DISABLE ROW LEVEL SECURITY;

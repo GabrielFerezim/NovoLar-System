@@ -143,22 +143,29 @@ export default function App() {
     setIsLoggedIn(false);
   };
 
-  const handleExportBackup = () => {
+  const handleExportBackup = async () => {
     try {
+      // Exporta diretamente do localStorage para garantir que pega tudo
+      const db = await loadDB();
       const backupData = {
-        products: products,
-        sales: sales,
-        expenses: expenses
+        exportedAt: new Date().toISOString(),
+        version: '2.0',
+        products: db.products || [],
+        sales: db.sales || [],
+        expenses: db.expenses || [],
+        closures: db.closures || [],
+        creditAccounts: db.creditAccounts || []
       };
       const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backupData, null, 2))}`;
       const downloadAnchor = document.createElement('a');
       downloadAnchor.setAttribute('href', jsonString);
-      downloadAnchor.setAttribute('download', `construcontrol_backup_${new Date().toISOString().split('T')[0]}.json`);
+      downloadAnchor.setAttribute('download', `novoLar_backup_${new Date().toISOString().split('T')[0]}.json`);
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
+      showScanNotification('Backup exportado com sucesso!');
     } catch (err) {
-      alert("Erro ao exportar backup: " + err.message);
+      alert('Erro ao exportar backup: ' + err.message);
     }
   };
 
@@ -166,30 +173,62 @@ export default function App() {
     const fileReader = new FileReader();
     const file = e.target.files[0];
     if (!file) return;
+    // Limpar o input para permitir re-importar o mesmo arquivo
+    e.target.value = '';
 
     fileReader.onload = async (event) => {
       try {
         const parsedData = JSON.parse(event.target.result);
-        if (!parsedData.products || !parsedData.sales || !parsedData.expenses) {
-          alert("Arquivo de backup inválido. Ele deve conter produtos, vendas e despesas.");
+        if (!parsedData.products) {
+          alert('Arquivo de backup inválido.');
           return;
         }
 
-        if (confirm("ATENÇÃO: Importar este backup substituirá todo o estoque e histórico atuais. Deseja continuar?")) {
-          const updatedDB = {
-            products: parsedData.products,
-            sales: parsedData.sales,
-            expenses: parsedData.expenses,
-            syncQueue: []
-          };
-          await saveDB(updatedDB);
-          setProducts(parsedData.products);
-          setSales(parsedData.sales);
-          setExpenses(parsedData.expenses);
-          alert("Backup restaurado com sucesso!");
+        if (!confirm('Deseja importar este backup? Os dados serão MESCLADOS com os dados atuais (nada será apagado).')) {
+          return;
         }
+
+        // Carrega o banco atual
+        const currentDb = await loadDB();
+
+        // Merge inteligente: só adiciona registros que ainda não existem localmente
+        const mergeById = (local, incoming) => {
+          const localIds = new Set(local.map(item => item.id));
+          const merged = [...local];
+          (incoming || []).forEach(item => {
+            if (!localIds.has(item.id)) {
+              merged.push(item);
+            }
+          });
+          return merged;
+        };
+
+        const updatedDB = {
+          ...currentDb,
+          products: mergeById(currentDb.products || [], parsedData.products),
+          sales: mergeById(currentDb.sales || [], parsedData.sales || []),
+          expenses: mergeById(currentDb.expenses || [], parsedData.expenses || []),
+          closures: mergeById(currentDb.closures || [], parsedData.closures || []),
+          creditAccounts: mergeById(currentDb.creditAccounts || [], parsedData.creditAccounts || []),
+          syncQueue: currentDb.syncQueue || []
+        };
+
+        await saveDB(updatedDB);
+        setProducts(updatedDB.products);
+        setSales(updatedDB.sales);
+        setExpenses(updatedDB.expenses);
+        setCreditAccounts(updatedDB.creditAccounts);
+
+        // Disparar sincronização com Supabase para enviar os novos dados
+        await executeSync();
+
+        const addedProducts = updatedDB.products.length - (currentDb.products || []).length;
+        const addedSales = updatedDB.sales.length - (currentDb.sales || []).length;
+        const addedAccounts = updatedDB.creditAccounts.length - (currentDb.creditAccounts || []).length;
+
+        showScanNotification(`Backup importado! +${addedProducts} produtos, +${addedSales} vendas, +${addedAccounts} contas fiado.`);
       } catch (err) {
-        alert("Erro ao ler arquivo de backup: " + err.message);
+        alert('Erro ao ler arquivo de backup: ' + err.message);
       }
     };
     fileReader.readAsText(file);
@@ -1916,7 +1955,7 @@ function DashboardView({
         <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '12px' }}>
           <div style={{ flex: '1', minWidth: '240px' }}>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-              Baixe uma cópia completa de segurança contendo todo o seu inventário de produtos, histórico de vendas e lançamentos de despesas. Recomendamos salvar este backup semanalmente em um pendrive.
+              Baixe uma cópia completa contendo <strong>produtos, vendas, despesas, fiados e fechamentos de caixa</strong>. Use este arquivo para migrar dados entre dispositivos. Recomendamos salvar semanalmente.
             </p>
             <button
               onClick={onExportBackup}
@@ -1929,7 +1968,7 @@ function DashboardView({
           <div style={{ width: '1px', backgroundColor: 'var(--border-color)', alignSelf: 'stretch' }}></div>
           <div style={{ flex: '1', minWidth: '240px' }}>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-              Para restaurar um backup anterior (por exemplo, após trocar de computador ou formatar o sistema), selecione o arquivo de backup (.json) exportado anteriormente.
+              Importe um backup para <strong>mesclar</strong> os dados com os já existentes (nenhum dado atual é apagado). Ideal para migrar dados do computador local para a Vercel ou outro dispositivo.
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px' }}>
               <input

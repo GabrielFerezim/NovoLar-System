@@ -432,6 +432,69 @@ export async function runBackgroundSync() {
         
         freshDb.products = merged;
         await saveDB(freshDb);
+
+        // ===== Sync bidirecional de Contas de Fiado =====
+        try {
+          const { data: cloudAccounts } = await supabase
+            .from('credit_accounts')
+            .select('*');
+
+          if (cloudAccounts) {
+            const reloadedDb = await loadDB();
+            const localAccounts = reloadedDb.creditAccounts || [];
+            const mergedAccounts = [...localAccounts];
+
+            // 1. Mesclar contas da nuvem que não existem localmente
+            cloudAccounts.forEach(ca => {
+              const idx = mergedAccounts.findIndex(a => a.id === ca.id);
+              const cloudAccount = {
+                id: ca.id,
+                name: ca.name,
+                address: ca.address || '',
+                phone: ca.phone || '',
+                balance: parseFloat(ca.balance) || 0,
+                history: Array.isArray(ca.history) ? ca.history : []
+              };
+              if (idx === -1) {
+                mergedAccounts.push(cloudAccount);
+              } else {
+                // Usar a versão com mais histórico (mais completa)
+                const localHistory = mergedAccounts[idx].history || [];
+                const cloudHistory = cloudAccount.history || [];
+                if (cloudHistory.length > localHistory.length) {
+                  mergedAccounts[idx] = cloudAccount;
+                }
+              }
+            });
+
+            // 2. Enviar para a nuvem contas locais que não estão na nuvem
+            const cloudIds = new Set(cloudAccounts.map(ca => ca.id));
+            for (const localAcc of localAccounts) {
+              if (!cloudIds.has(localAcc.id)) {
+                try {
+                  await supabase.from('credit_accounts').upsert({
+                    id: localAcc.id,
+                    name: localAcc.name,
+                    address: localAcc.address || '',
+                    phone: localAcc.phone || '',
+                    balance: localAcc.balance || 0,
+                    history: localAcc.history || [],
+                    updated_at: new Date().toISOString()
+                  });
+                } catch (e) {
+                  console.warn('Erro ao enviar conta fiado local para nuvem:', e);
+                }
+              }
+            }
+
+            reloadedDb.creditAccounts = mergedAccounts;
+            await saveDB(reloadedDb);
+          }
+        } catch (e) {
+          console.warn('Erro ao sincronizar fiados com Supabase (offline):', e);
+        }
+        // ===== Fim do Sync de Fiados =====
+
         return { status: 'success', message: 'Estoque sincronizado' };
       }
     } catch (e) {
@@ -657,7 +720,25 @@ export async function saveCreditAccount(account) {
   }
 
   await saveDB(db);
-  // Futuramente, pode sincronizar com Supabase aqui
+
+  // Sincronizar com Supabase
+  if (targetAccount) {
+    try {
+      const { error } = await supabase.from('credit_accounts').upsert({
+        id: targetAccount.id,
+        name: targetAccount.name,
+        address: targetAccount.address || '',
+        phone: targetAccount.phone || '',
+        balance: targetAccount.balance || 0,
+        history: targetAccount.history || [],
+        updated_at: new Date().toISOString()
+      });
+      if (error) console.warn('Erro ao sincronizar conta fiado com Supabase:', error);
+    } catch (err) {
+      console.warn('Offline ao salvar conta fiado:', err);
+    }
+  }
+
   return db.creditAccounts;
 }
 
@@ -690,11 +771,26 @@ export async function addCreditTransaction(accountId, type, amount, description,
     account.balance = (account.balance || 0) + transaction.amount;
   } else if (type === 'payment') {
     account.balance = (account.balance || 0) - transaction.amount;
-    // Opcional: registrar como uma entrada de caixa 'Dinheiro' ou outro se necessário,
-    // mas por enquanto controlaremos no fiado.
   }
 
   db.creditAccounts[idx] = account;
   await saveDB(db);
+
+  // Sincronizar conta atualizada com Supabase
+  try {
+    const { error } = await supabase.from('credit_accounts').upsert({
+      id: account.id,
+      name: account.name,
+      address: account.address || '',
+      phone: account.phone || '',
+      balance: account.balance || 0,
+      history: account.history || [],
+      updated_at: new Date().toISOString()
+    });
+    if (error) console.warn('Erro ao sincronizar transação fiado com Supabase:', error);
+  } catch (err) {
+    console.warn('Offline ao sincronizar transação fiado:', err);
+  }
+
   return db.creditAccounts;
 }
