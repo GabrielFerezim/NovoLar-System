@@ -105,11 +105,11 @@ export async function syncAllFromCloud() {
   try {
     // Buscar tudo do Supabase em paralelo
     const [
-      { data: cloudProducts },
-      { data: cloudSales },
-      { data: cloudExpenses },
-      { data: cloudClosures },
-      { data: cloudAccounts }
+      resProducts,
+      resSales,
+      resExpenses,
+      resClosures,
+      resAccounts
     ] = await Promise.all([
       supabase.from('products').select('*').order('name', { ascending: true }),
       supabase.from('sales').select('*').order('timestamp', { ascending: false }),
@@ -117,6 +117,34 @@ export async function syncAllFromCloud() {
       supabase.from('closures').select('*'),
       supabase.from('credit_accounts').select('*')
     ]);
+
+    // Validar erros - se houver erro crítico, abortamos para não apagar a base local
+    if (resProducts.error) throw new Error(`Erro ao buscar produtos: ${resProducts.error.message}`);
+    if (resSales.error) throw new Error(`Erro ao buscar vendas: ${resSales.error.message}`);
+    if (resExpenses.error) throw new Error(`Erro ao buscar despesas: ${resExpenses.error.message}`);
+
+    const cloudProducts = resProducts.data || [];
+    const cloudSales = resSales.data || [];
+    const cloudExpenses = resExpenses.data || [];
+
+    // Fechamentos e Fiados podem não ter a tabela criada ainda (caso não tenham rodado o SQL)
+    let cloudClosures = resClosures.data || [];
+    if (resClosures.error) {
+      if (resClosures.error.message.includes('relation "closures" does not exist')) {
+        cloudClosures = [];
+      } else {
+        throw new Error(`Erro ao buscar fechamentos: ${resClosures.error.message}`);
+      }
+    }
+
+    let cloudAccounts = resAccounts.data || [];
+    if (resAccounts.error) {
+      if (resAccounts.error.message.includes('relation "credit_accounts" does not exist')) {
+        cloudAccounts = [];
+      } else {
+        throw new Error(`Erro ao buscar fiados: ${resAccounts.error.message}`);
+      }
+    }
 
     // Carregar banco local para manter a fila de sync e dados extras
     const localDb = await loadDB();
@@ -197,6 +225,9 @@ export async function syncAllFromCloud() {
     }));
 
     // Mesclar: cloud é a verdade, mas mantemos itens locais pendentes de sync
+    const localOnlyProducts = (localDb.products || []).filter(
+      lp => !products.find(p => p.id === lp.id)
+    );
     const localOnlySales = (localDb.sales || []).filter(
       ls => !ls.synced && !sales.find(s => s.id === ls.id)
     );
@@ -206,7 +237,7 @@ export async function syncAllFromCloud() {
 
     const mergedDb = {
       ...localDb,
-      products,
+      products: [...products, ...localOnlyProducts],
       sales: [...sales, ...localOnlySales],
       expenses: [...expenses, ...localOnlyExpenses],
       closures,
