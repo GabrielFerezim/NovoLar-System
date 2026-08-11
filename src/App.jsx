@@ -2803,16 +2803,21 @@ function ProductsView({ products, onEditProduct, onDeleteProduct, onTransferStoc
   const [storeFilter, setStoreFilter] = useState('all'); // 'all' | 'loja-1' | 'loja-2'
 
   const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.code.includes(searchTerm) ||
-      (p.category && p.category.toLowerCase().includes(searchTerm.toLowerCase()));
+    const nameStr = (p.name || '').toLowerCase();
+    const codeStr = String(p.code || '');
+    const catStr = (p.category || '').toLowerCase();
+    const searchLower = searchTerm.toLowerCase();
+
+    const matchesSearch = nameStr.includes(searchLower) ||
+      codeStr.includes(searchLower) ||
+      catStr.includes(searchLower);
 
     if (!matchesSearch) return false;
 
     if (storeFilter === 'loja-1') {
-      return (p.stockLoja1 ?? p.stock ?? 0) > 0;
+      return (p.stockLoja1 ?? p.stock ?? 0) > 0 || (p.stockLoja2 ?? 0) === 0;
     } else if (storeFilter === 'loja-2') {
-      return (p.stockLoja2 ?? 0) > 0;
+      return (p.stockLoja2 ?? 0) > 0 || (p.stockLoja1 ?? 0) === 0;
     }
     return true;
   });
@@ -2908,8 +2913,8 @@ function ProductsView({ products, onEditProduct, onDeleteProduct, onTransferStoc
                       </div>
                     </td>
                     <td><span className="badge badge-info">{p.category || 'Geral'}</span></td>
-                    <td>R$ {p.costPrice.toFixed(2)}</td>
-                    <td><strong>R$ {p.salePrice.toFixed(2)}</strong></td>
+                    <td>R$ {(p.costPrice || 0).toFixed(2)}</td>
+                    <td><strong>R$ {(p.salePrice || 0).toFixed(2)}</strong></td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                         <div style={{ fontSize: '11px', display: 'flex', justifyContent: 'space-between' }}>
