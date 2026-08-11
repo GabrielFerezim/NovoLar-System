@@ -55,7 +55,8 @@ import {
   saveClosure,
   getCreditAccounts,
   saveCreditAccount,
-  addCreditTransaction
+  addCreditTransaction,
+  clearAllDatabase
 } from './db';
 import { supabase } from './supabase';
 import { FiadoCheckoutModal, CreditAccountsView } from './FiadoComponents';
@@ -234,6 +235,33 @@ export default function App() {
     };
     fileReader.readAsText(file);
   };
+
+  const handleResetAllData = async () => {
+    const confirmText = prompt("ATENÇÃO EXTREMA: Isso irá apagar PERMANENTEMENTE todos os dados (produtos, vendas, despesas, fiados e fechamentos) locais e na nuvem.\n\nPara confirmar, digite APAGAR TUDO em maiúsculas:");
+    if (confirmText !== 'APAGAR TUDO') {
+      alert('Operação cancelada ou texto incorreto.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await clearAllDatabase();
+      
+      // Limpa os estados do React
+      setProducts([]);
+      setSales([]);
+      setExpenses([]);
+      setCreditAccounts([]);
+      setSyncPendingCount(0);
+      
+      alert('Tudo limpo! Todo o sistema e a nuvem foram zerados com sucesso.');
+    } catch (err) {
+      alert('Erro ao resetar o sistema: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   // Status do Scanner Global
   const [scannerActive, setScannerActive] = useState(true);
@@ -1276,6 +1304,7 @@ export default function App() {
                 onChangeTab={setActiveTab}
                 onExportBackup={handleExportBackup}
                 onImportBackup={handleImportBackup}
+                onResetAllData={handleResetAllData}
               />
               <HistoryExpensesView
                 sales={filteredSales}
@@ -1380,7 +1409,8 @@ function DashboardView({
   onSimulateScan,
   onChangeTab,
   onExportBackup,
-  onImportBackup
+  onImportBackup,
+  onResetAllData
 }) {
   const [viewMode, setViewMode] = useState('local'); // 'local' ou 'consolidated'
   const [cloudStoreFilter, setCloudStoreFilter] = useState('all'); // 'all', 'loja-1', 'loja-2'
@@ -1991,6 +2021,32 @@ function DashboardView({
                 <Upload size={16} /> Escolher Arquivo de Backup
               </label>
             </div>
+          </div>
+          <div style={{ width: '1px', backgroundColor: 'var(--border-color)', alignSelf: 'stretch' }}></div>
+          <div style={{ flex: '1', minWidth: '240px' }}>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+              <strong>Zerar Banco de Dados:</strong> Apague todos os produtos, vendas, despesas, fiados e fechamentos de caixa localmente e na nuvem para iniciar o uso do zero.
+            </p>
+            <button
+              onClick={onResetAllData}
+              className="btn-danger"
+              style={{
+                marginTop: '12px',
+                width: 'auto',
+                padding: '10px 20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                backgroundColor: 'var(--danger, #dc2626)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 'var(--radius-md)',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              <Trash2 size={16} /> Zerar Sistema e Nuvem
+            </button>
           </div>
         </div>
       </div>

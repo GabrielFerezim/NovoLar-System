@@ -947,3 +947,32 @@ export async function addCreditTransaction(accountId, type, amount, description,
 
   return db.creditAccounts;
 }
+
+// Apaga TODOS os dados locais e do Supabase para começar do zero
+export async function clearAllDatabase() {
+  const emptyDb = {
+    products: [],
+    sales: [],
+    expenses: [],
+    closures: [],
+    syncQueue: [],
+    creditAccounts: []
+  };
+
+  // Salva banco vazio localmente
+  await saveDB(emptyDb);
+
+  // Deleta tudo de todas as tabelas no Supabase
+  try {
+    const tables = ['sales', 'expenses', 'products', 'closures', 'credit_accounts'];
+    await Promise.all(
+      tables.map(table => supabase.from(table).delete().neq('id', 'dummy_non_existent_id'))
+    );
+    console.log('✅ Supabase limpo com sucesso!');
+  } catch (e) {
+    console.error('Erro ao limpar Supabase:', e);
+    throw e;
+  }
+
+  return emptyDb;
+}
