@@ -830,7 +830,7 @@ export default function App() {
       {/* Sidebar Lateral */}
       <aside className={`sidebar ${isMobileMenuOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-brand" style={{ padding: '16px', display: 'flex', justifyContent: 'center' }}>
-          <img src="/logo.png" alt="Novo Lar Logo" style={{ width: '100%', maxWidth: '180px', height: 'auto', objectFit: 'contain' }} />
+          <img src="logo.png" alt="Novo Lar Logo" style={{ width: '100%', maxWidth: '180px', height: 'auto', objectFit: 'contain' }} />
         </div>
 
         <nav className="sidebar-menu">
@@ -3511,7 +3511,7 @@ function LoginView({ onLogin }) {
     <div className="login-overlay">
       <div className="login-card">
         <div className="login-logo-container" style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-          <img src="/logo.png" alt="Novo Lar Logo" style={{ width: '100%', maxWidth: '280px', height: 'auto', objectFit: 'contain' }} />
+          <img src="logo.png" alt="Novo Lar Logo" style={{ width: '100%', maxWidth: '280px', height: 'auto', objectFit: 'contain' }} />
         </div>
 
         <h2 className="login-title">Acesso ao Sistema</h2>
@@ -4289,7 +4289,7 @@ function ReceiptModal({ receipt, onClose }) {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '12px' }}>
-              <img src={window.location.origin + "/logo.png"} alt="Novo Lar Logo" style={{ maxWidth: '140px', height: 'auto', display: 'block', margin: '0 auto' }} />
+              <img src="logo.png" alt="Novo Lar Logo" style={{ maxWidth: '140px', height: 'auto', display: 'block', margin: '0 auto' }} />
             </div>
             <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>NOVO LAR CASA & CONSTRUÇÃO</div>
             <div style={{ textAlign: 'center', fontSize: '11px', color: '#666', marginTop: '2px' }}>LOJA MATRIZ - CNPJ: 62.002.153/0001-25</div>
@@ -5545,7 +5545,7 @@ function InvoiceModal({ sale, onClose }) {
                 <tr>
                   <td style={{ width: '18%', border: '1px solid #000', padding: '6px', textAlign: 'center', verticalAlign: 'middle' }}>
                     <img
-                      src={window.location.origin + "/logo.png"}
+                      src="logo.png"
                       alt="Logo Novo Lar"
                       style={{ maxWidth: '80px', height: 'auto', display: 'block', margin: '0 auto' }}
                     />
