@@ -282,10 +282,7 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. Tenta puxar tudo da nuvem primeiro (garante dados iguais no Electron e Vercel)
-      await syncAllFromCloud();
-
-      // 2. Carrega os dados locais (agora atualizados com a nuvem)
+      // 1. Carrega SEMPRE os dados locais primeiro para exibir imediatamente na tela
       const db = await loadDB();
       setProducts(db.products || []);
       setSales(db.sales || []);
@@ -295,6 +292,16 @@ export default function App() {
 
       const pendings = await getPendingClosures(getStoreId());
       setPendingClosures(pendings);
+
+      // 2. Em seguida, tenta buscar atualizações da nuvem (sem travar se estiver offline ou com falha)
+      const res = await syncAllFromCloud();
+      if (res && res.success && res.data) {
+        setProducts(res.data.products || []);
+        setSales(res.data.sales || []);
+        setExpenses(res.data.expenses || []);
+        setCreditAccounts(res.data.creditAccounts || []);
+        setSyncPendingCount(res.data.syncQueue ? res.data.syncQueue.length : 0);
+      }
     } catch (error) {
       console.error("Erro ao carregar dados do banco:", error);
     } finally {

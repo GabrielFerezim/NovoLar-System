@@ -47,6 +47,14 @@ export async function loadDB() {
     }
   }
 
+  // Garantia de inicialização completa das chaves
+  if (!dbData.products) dbData.products = [];
+  if (!dbData.sales) dbData.sales = [];
+  if (!dbData.expenses) dbData.expenses = [];
+  if (!dbData.closures) dbData.closures = [];
+  if (!dbData.syncQueue) dbData.syncQueue = [];
+  if (!dbData.creditAccounts) dbData.creditAccounts = [];
+
   // Garantia de migração para múltiplas lojas (adiciona storeId se não houver)
   let migrated = false;
   if (dbData.sales) {
@@ -65,14 +73,6 @@ export async function loadDB() {
       }
     });
   }
-  if (!dbData.closures) {
-    dbData.closures = [];
-    migrated = true;
-  }
-  if (!dbData.creditAccounts) {
-    dbData.creditAccounts = [];
-    migrated = true;
-  }
 
   if (migrated) {
     await saveDB(dbData);
@@ -86,7 +86,10 @@ export async function saveDB(data) {
   if (isElectron) {
     try {
       const res = await window.electronAPI.writeDatabase(data);
-      if (res && res.success) return true;
+      if (res && res.success) {
+        localStorage.setItem('novo_lar_db', JSON.stringify(data));
+        return true;
+      }
     } catch (e) {
       console.error("Falha ao salvar no banco nativo", e);
     }
