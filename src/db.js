@@ -270,67 +270,87 @@ export async function getProducts() {
 }
 
 export async function saveProduct(product) {
-  const db = await loadDB();
-  if (!db.products) db.products = [];
-  
-  let targetProduct;
-  if (product.id) {
-    const idx = db.products.findIndex(p => p.id === product.id);
-    if (idx !== -1) {
-      db.products[idx] = { ...db.products[idx], ...product };
-      targetProduct = db.products[idx];
-    }
-  } else {
-    targetProduct = {
-      ...product,
-      id: Date.now().toString()
-    };
-    db.products.push(targetProduct);
-  }
-  
-  await saveDB(db);
-
-  const stock1 = targetProduct.stockLoja1 ?? targetProduct.stock ?? 0;
-  const stock2 = targetProduct.stockLoja2 ?? 0;
-  const cleanDesc = (targetProduct.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
+  const productId = product.id ? String(product.id) : Date.now().toString();
+  const stock1 = product.stockLoja1 ?? product.stock ?? 0;
+  const stock2 = product.stockLoja2 ?? 0;
+  const cleanDesc = (product.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
   const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
+  const totalStock = stock1 + stock2;
 
-  // Tentar enviar para a nuvem de forma assíncrona
+  const productRecord = {
+    id: productId,
+    code: String(product.code || '').trim(),
+    name: String(product.name || '').trim(),
+    description: supabaseDesc,
+    cost_price: parseFloat(product.costPrice) || 0,
+    sale_price: parseFloat(product.salePrice) || 0,
+    stock: totalStock,
+    min_stock: parseInt(product.minStock) || 0,
+    category: product.category || 'Materiais Básicos',
+    unit: product.unit || 'Unidade',
+    updated_at: new Date().toISOString()
+  };
+
+  // 1. Enviar para a nuvem
   try {
-    const { error } = await supabase.from('products').upsert({
-      id: targetProduct.id,
-      code: targetProduct.code,
-      name: targetProduct.name,
-      description: supabaseDesc,
-      cost_price: targetProduct.costPrice,
-      sale_price: targetProduct.salePrice,
-      stock: targetProduct.stock,
-      min_stock: targetProduct.minStock,
-      category: targetProduct.category,
-      unit: targetProduct.unit,
-      updated_at: new Date().toISOString()
-    });
+    const { error } = await supabase.from('products').upsert(productRecord);
     if (error) throw error;
   } catch (err) {
     console.warn("Offline ou erro na nuvem ao salvar produto, mantido localmente", err);
-    // Adicionar à fila de sincronização
-    await addToSyncQueue('product', targetProduct.id);
+    await addToSyncQueue('product', productId);
   }
-  
+
+  // 2. Atualizar banco local
+  const db = await loadDB();
+  if (!db.products) db.products = [];
+  const idx = db.products.findIndex(p => String(p.id) === productId);
+  const formattedLocalProduct = {
+    id: productId,
+    code: productRecord.code,
+    name: productRecord.name,
+    description: cleanDesc,
+    costPrice: productRecord.cost_price,
+    salePrice: productRecord.sale_price,
+    stockLoja1: stock1,
+    stockLoja2: stock2,
+    stock: totalStock,
+    minStock: productRecord.min_stock,
+    category: productRecord.category,
+    unit: productRecord.unit
+  };
+
+  if (idx !== -1) {
+    db.products[idx] = formattedLocalProduct;
+  } else {
+    db.products.push(formattedLocalProduct);
+  }
+  await saveDB(db);
+
+  // 3. Tentar recarregar nuvem completa para garantir sincronia absoluta
+  const cloudRes = await syncAllFromCloud();
+  if (cloudRes && cloudRes.success && cloudRes.data && cloudRes.data.products) {
+    return cloudRes.data.products;
+  }
+
   return db.products;
 }
 
 export async function deleteProduct(id) {
+  const pId = String(id);
   const db = await loadDB();
-  db.products = (db.products || []).filter(p => p.id !== id);
+  db.products = (db.products || []).filter(p => String(p.id) !== pId);
   await saveDB(db);
 
-  // Excluir na nuvem
   try {
-    await supabase.from('products').delete().eq('id', id);
+    await supabase.from('products').delete().eq('id', pId);
   } catch (err) {
     console.warn("Erro ao deletar produto na nuvem, mantido localmente", err);
-    await addToSyncQueue('delete_product', id);
+    await addToSyncQueue('delete_product', pId);
+  }
+
+  const cloudRes = await syncAllFromCloud();
+  if (cloudRes && cloudRes.success && cloudRes.data && cloudRes.data.products) {
+    return cloudRes.data.products;
   }
   return db.products;
 }
@@ -352,13 +372,12 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
   const currentStore = getStoreId();
 
   const saleProducts = saleItems.map(item => {
-    const originalProduct = db.products.find(p => p.id === item.id);
+    const originalProduct = db.products.find(p => String(p.id) === String(item.id));
     const itemCost = originalProduct ? originalProduct.costPrice : item.costPrice || 0;
     
     totalCost += itemCost * item.quantity;
     totalPrice += item.salePrice * item.quantity;
     
-    // Atualizar estoque no banco local (específico por loja)
     if (originalProduct) {
       if (currentStore === 'loja-2') {
         originalProduct.stockLoja2 = Math.max(0, (originalProduct.stockLoja2 ?? 0) - item.quantity);
@@ -369,7 +388,7 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
     }
     
     return {
-      productId: item.id,
+      productId: String(item.id),
       name: item.name,
       quantity: item.quantity,
       salePrice: item.salePrice,
@@ -395,9 +414,9 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
   db.sales.push(newSale);
   await saveDB(db);
 
-  // Tentar enviar para a nuvem
+  // Tentar enviar para a nuvem com upsert seguro
   try {
-    const { error } = await supabase.from('sales').insert({
+    const { error } = await supabase.from('sales').upsert({
       id: newSale.id,
       timestamp: newSale.timestamp,
       total_price: newSale.totalPrice,
@@ -411,28 +430,41 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
     
     if (error) throw error;
     
-    // Se deu certo, atualiza o estoque físico dos produtos na nuvem com o split correto
+    // Atualizar estoque dos produtos na nuvem
     for (const item of saleItems) {
-      const originalProduct = db.products.find(p => p.id === item.id);
+      const originalProduct = db.products.find(p => String(p.id) === String(item.id));
       if (originalProduct) {
         const stock1 = originalProduct.stockLoja1 ?? originalProduct.stock ?? 0;
         const stock2 = originalProduct.stockLoja2 ?? 0;
         const cleanDesc = (originalProduct.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
         const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
 
-        await supabase.from('products').update({
+        await supabase.from('products').upsert({
+          id: String(originalProduct.id),
+          code: String(originalProduct.code || ''),
+          name: originalProduct.name,
+          description: supabaseDesc,
+          cost_price: originalProduct.costPrice,
+          sale_price: originalProduct.salePrice,
           stock: originalProduct.stock,
-          description: supabaseDesc
-        }).eq('id', item.id);
+          min_stock: originalProduct.minStock,
+          category: originalProduct.category,
+          unit: originalProduct.unit,
+          updated_at: new Date().toISOString()
+        });
       }
     }
 
-    // Marcar como sincronizado localmente
     newSale.synced = true;
     await saveDB(db);
   } catch (err) {
     console.warn("Venda gravada localmente. Offline para sincronizar na nuvem.", err);
     await addToSyncQueue('sale', newSale.id);
+  }
+
+  const cloudRes = await syncAllFromCloud();
+  if (cloudRes && cloudRes.success && cloudRes.data) {
+    return { sales: cloudRes.data.sales, products: cloudRes.data.products };
   }
 
   return { sales: db.sales, products: db.products };
@@ -482,16 +514,18 @@ export async function saveExpense(expense) {
   if (!db.expenses) db.expenses = [];
   
   let targetExpense;
+  const expId = expense.id ? String(expense.id) : `G-${Date.now().toString().slice(-4)}`;
+  
   if (expense.id) {
-    const idx = db.expenses.findIndex(g => g.id === expense.id);
+    const idx = db.expenses.findIndex(g => String(g.id) === expId);
     if (idx !== -1) {
-      db.expenses[idx] = { ...db.expenses[idx], ...expense };
+      db.expenses[idx] = { ...db.expenses[idx], ...expense, id: expId };
       targetExpense = db.expenses[idx];
     }
   } else {
     targetExpense = {
       ...expense,
-      id: `G-${Date.now().toString().slice(-4)}`,
+      id: expId,
       timestamp: new Date().toISOString(),
       storeId: getStoreId(),
       synced: false
@@ -501,15 +535,15 @@ export async function saveExpense(expense) {
   
   await saveDB(db);
 
-  // Enviar para nuvem
+  // Enviar para nuvem com upsert
   try {
-    const { error } = await supabase.from('expenses').insert({
+    const { error } = await supabase.from('expenses').upsert({
       id: targetExpense.id,
       timestamp: targetExpense.timestamp,
       description: targetExpense.description,
       amount: targetExpense.amount,
       category: targetExpense.category,
-      store_id: getStoreId()
+      store_id: targetExpense.storeId || getStoreId()
     });
     if (error) throw error;
     
@@ -520,20 +554,32 @@ export async function saveExpense(expense) {
     await addToSyncQueue('expense', targetExpense.id);
   }
   
+  const cloudRes = await syncAllFromCloud();
+  if (cloudRes && cloudRes.success && cloudRes.data && cloudRes.data.expenses) {
+    return cloudRes.data.expenses;
+  }
+
   return db.expenses;
 }
 
 export async function deleteExpense(id) {
+  const expId = String(id);
   const db = await loadDB();
-  db.expenses = (db.expenses || []).filter(g => g.id !== id);
+  db.expenses = (db.expenses || []).filter(g => String(g.id) !== expId);
   await saveDB(db);
 
   try {
-    await supabase.from('expenses').delete().eq('id', id);
+    await supabase.from('expenses').delete().eq('id', expId);
   } catch (err) {
     console.warn("Erro ao deletar despesa na nuvem, mantido localmente", err);
-    await addToSyncQueue('delete_expense', id);
+    await addToSyncQueue('delete_expense', expId);
   }
+
+  const cloudRes = await syncAllFromCloud();
+  if (cloudRes && cloudRes.success && cloudRes.data && cloudRes.data.expenses) {
+    return cloudRes.data.expenses;
+  }
+
   return db.expenses;
 }
 
