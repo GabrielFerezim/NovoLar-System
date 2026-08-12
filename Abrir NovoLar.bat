@@ -9,11 +9,6 @@ echo.
 
 cd /d "%~dp0"
 
-echo  Construindo o app...
-call npm run build
-
-echo.
-echo  Abrindo o sistema...
-start "" npx electron .
+start "" "node_modules\electron\dist\electron.exe" .
 
 exit

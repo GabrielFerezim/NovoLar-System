@@ -58,7 +58,6 @@ import {
   addCreditTransaction,
   clearAllDatabase
 } from './db';
-import { supabase } from './supabase';
 import { FiadoCheckoutModal, CreditAccountsView } from './FiadoComponents';
 
 export const getProductStock = (product) => {
@@ -282,52 +281,35 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. O App SEMPRE carrega os dados locais PRIMEIRO (Exibição instantânea 0ms)
+      // O App carrega os dados locais
       const localDb = await loadDB();
       setProducts(localDb.products || []);
       setSales(localDb.sales || []);
       setExpenses(localDb.expenses || []);
       setCreditAccounts(localDb.creditAccounts || []);
-      setSyncPendingCount(localDb.syncQueue ? localDb.syncQueue.length : 0);
+      setSyncPendingCount(0);
 
       const pendings = await getPendingClosures(getStoreId());
       setPendingClosures(pendings);
 
-      // 2. Transmite produtos locais para o Supabase (para a Vercel ler) e atualiza em background
-      const res = await syncAllFromCloud();
-      if (res && res.success && res.data) {
-        setProducts(res.data.products || []);
-        setSales(res.data.sales || []);
-        setExpenses(res.data.expenses || []);
-        setCreditAccounts(res.data.creditAccounts || []);
-      }
+      // Dispara o espelhamento em background inicial
+      executeSync();
     } catch (error) {
-      console.error("Erro ao sincronizar dados com nuvem:", error);
+      console.error("Erro ao carregar dados locais:", error);
     } finally {
       setLoading(false);
     }
   };
 
   const executeSync = async () => {
+    setSyncStatus('Espelhando...');
     try {
       const res = await runBackgroundSync();
-      const db = await loadDB();
-      const pendingJobs = db.syncQueue ? db.syncQueue.length : 0;
-      setSyncPendingCount(pendingJobs);
-
-      if (res.status === 'success' || res.status === 'syncing') {
+      if (res.status === 'success') {
         setSyncStatus('Sincronizado');
-      } else if (res.status === 'error') {
-        setSyncStatus(res.message);
       } else {
-        setSyncStatus(pendingJobs > 0 ? `${pendingJobs} pendentes` : 'Offline');
+        setSyncStatus('Offline');
       }
-
-      // Atualizar sempre a interface com os dados mais recentes do banco local/nuvem
-      setProducts(db.products || []);
-      setSales(db.sales || []);
-      setExpenses(db.expenses || []);
-      setCreditAccounts(db.creditAccounts || []);
     } catch (e) {
       setSyncStatus('Offline');
     }
@@ -338,16 +320,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!loading) {
-      executeSync();
-    }
-  }, [loading]);
-
-  useEffect(() => {
-    // Sincronização em background a cada 15 segundos
+    // Sincronização/espelhamento em background a cada 30 segundos
     const timer = setInterval(() => {
       executeSync();
-    }, 15000);
+    }, 30000);
     return () => clearInterval(timer);
   }, []);
 
@@ -941,13 +917,36 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <div className="status-badge" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <div className="status-dot" style={{ backgroundColor: syncPendingCount > 0 ? 'var(--brand-yellow)' : (syncStatus === 'Offline' ? 'var(--text-muted)' : 'var(--success)') }}></div>
+                <div 
+                  className="status-dot" 
+                  style={{ 
+                    backgroundColor: syncStatus === 'Sincronizado' 
+                      ? 'var(--success)' 
+                      : (syncStatus === 'Espelhando...' ? 'var(--brand-yellow)' : 'var(--text-muted)') 
+                  }}
+                ></div>
                 <span style={{ fontWeight: '600', fontSize: '12px' }}>
-                  {syncPendingCount > 0 ? `${syncPendingCount} envios pendentes` : 'Nuvem Conectada'}
+                  Banco Local Ativo
                 </span>
               </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                Sincronismo: <strong>{syncStatus}</strong>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                <span>Nuvem: <strong>{syncStatus}</strong></span>
+                <button 
+                  onClick={executeSync}
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    color: 'var(--brand-primary)',
+                    cursor: 'pointer',
+                    fontSize: '10px',
+                    fontWeight: '700',
+                    padding: '0',
+                    textDecoration: 'underline'
+                  }}
+                  title="Forçar espelhamento agora"
+                >
+                  Sincronizar
+                </button>
               </div>
             </div>
 
