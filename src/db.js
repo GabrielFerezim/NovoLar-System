@@ -14,6 +14,14 @@ function safeParseJSON(val, defaultVal = []) {
   }
 }
 
+function formatTimestamp(t) {
+  if (!t) return new Date().toISOString();
+  if (t instanceof Date) return t.toISOString();
+  // Se for uma string de data longa que o PG pode retornar (ex: '2026-08-12 14:32:00')
+  // vamos garantir que seja convertida de forma compatível
+  return String(t);
+}
+
 const initialMockData = {
   products: [],
   sales: [],
@@ -169,7 +177,7 @@ export async function loadDB() {
 
       const parsedSales = (salesRes || []).map(s => ({
         id: s.id,
-        timestamp: s.timestamp,
+        timestamp: formatTimestamp(s.timestamp),
         totalPrice: parseFloat(s.total_price) || 0,
         totalCost: parseFloat(s.total_cost) || 0,
         profit: parseFloat(s.profit) || 0,
@@ -209,7 +217,7 @@ export async function loadDB() {
         sales: parsedSales,
         expenses: (expensesRes || []).map(e => ({
           id: e.id,
-          timestamp: e.timestamp,
+          timestamp: formatTimestamp(e.timestamp),
           description: e.description,
           amount: parseFloat(e.amount) || 0,
           category: e.category,
@@ -220,7 +228,7 @@ export async function loadDB() {
           id: c.id,
           storeId: c.store_id,
           date: c.date,
-          closedAt: c.closed_at,
+          closedAt: formatTimestamp(c.closed_at),
           expectedCash: parseFloat(c.expected_cash) || 0,
           actualCash: parseFloat(c.actual_cash) || 0,
           difference: parseFloat(c.difference) || 0,
