@@ -448,6 +448,11 @@ export async function deleteProduct(id) {
     if (!res.success) {
       alert("Erro ao excluir produto no SQLite: " + res.error);
     }
+    try {
+      await sql`DELETE FROM products WHERE id = ${pId}`;
+    } catch (e) {
+      console.warn("Falha ao deletar produto remoto na exclusão local:", e);
+    }
     syncAllToCloud().catch(err => console.warn("Falha no espelhamento ao excluir:", err));
     return getProducts();
   }
@@ -618,6 +623,11 @@ export async function deleteExpense(id) {
   const expId = String(id);
   if (isElectron()) {
     await window.electronAPI.dbRun('DELETE FROM expenses WHERE id = ?', [expId]);
+    try {
+      await sql`DELETE FROM expenses WHERE id = ${expId}`;
+    } catch (e) {
+      console.warn("Falha ao deletar despesa remota na exclusão local:", e);
+    }
     syncAllToCloud().catch(err => console.warn("Falha ao espelhar exclusão de despesa:", err));
     return getExpenses();
   }
@@ -857,10 +867,114 @@ export async function syncAllToCloud() {
   try {
     await initializeNeonTables();
 
-    // Carregar do SQLite Local
+    // ========================================================
+    // 1. PULL: BAIXAR NOVOS DADOS DA NUVEM PARA O SQLITE LOCAL
+    // ========================================================
+    const [cloudProducts, cloudSales, cloudExpenses, cloudClosures, cloudAccounts] = await Promise.all([
+      sql`SELECT * FROM products`,
+      sql`SELECT * FROM sales`,
+      sql`SELECT * FROM expenses`,
+      sql`SELECT * FROM closures`,
+      sql`SELECT * FROM credit_accounts`
+    ]);
+
+    // Gravar produtos da nuvem no SQLite local
+    for (const p of cloudProducts || []) {
+      await window.electronAPI.dbRun(
+        `INSERT OR REPLACE INTO products (id, code, name, description, costPrice, salePrice, stockLoja1, stockLoja2, stock, minStock, category, unit)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          p.id,
+          p.code || '',
+          p.name || '',
+          p.description || '',
+          parseFloat(p.cost_price) || 0,
+          parseFloat(p.sale_price) || 0,
+          p.stock || 0,
+          0,
+          p.stock || 0,
+          p.min_stock || 0,
+          p.category || 'Materiais Básicos',
+          p.unit || 'Unidade'
+        ]
+      );
+    }
+
+    // Gravar vendas da nuvem no SQLite local
+    for (const s of cloudSales || []) {
+      await window.electronAPI.dbRun(
+        `INSERT OR REPLACE INTO sales (id, timestamp, totalPrice, totalCost, profit, paymentMethod, storeId, items, deliveryDetails)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          s.id,
+          formatTimestamp(s.timestamp),
+          parseFloat(s.total_price) || 0,
+          parseFloat(s.total_cost) || 0,
+          parseFloat(s.profit) || 0,
+          s.payment_method || '',
+          s.store_id || 'loja-1',
+          s.items || '[]',
+          s.delivery_details ? s.delivery_details : null
+        ]
+      );
+    }
+
+    // Gravar despesas da nuvem no SQLite local
+    for (const e of cloudExpenses || []) {
+      await window.electronAPI.dbRun(
+        `INSERT OR REPLACE INTO expenses (id, timestamp, description, amount, category, storeId)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          e.id,
+          formatTimestamp(e.timestamp),
+          e.description || '',
+          parseFloat(e.amount) || 0,
+          e.category || '',
+          e.store_id || 'loja-1'
+        ]
+      );
+    }
+
+    // Gravar fechamentos da nuvem no SQLite local
+    for (const c of cloudClosures || []) {
+      await window.electronAPI.dbRun(
+        `INSERT OR REPLACE INTO closures (id, storeId, date, closedAt, expectedCash, actualCash, difference, observations)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          c.id,
+          c.store_id || 'loja-1',
+          c.date || '',
+          formatTimestamp(c.closed_at),
+          parseFloat(c.expected_cash) || 0,
+          parseFloat(c.actual_cash) || 0,
+          parseFloat(c.difference) || 0,
+          c.observations || ''
+        ]
+      );
+    }
+
+    // Gravar fiados da nuvem no SQLite local
+    for (const ca of cloudAccounts || []) {
+      await window.electronAPI.dbRun(
+        `INSERT OR REPLACE INTO credit_accounts (id, name, address, phone, balance, history)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          ca.id,
+          ca.name || '',
+          ca.address || '',
+          ca.phone || '',
+          parseFloat(ca.balance) || 0,
+          ca.history || '[]'
+        ]
+      );
+    }
+
+    // ========================================================
+    // 2. PUSH: ENVIAR NOVOS DADOS LOCAIS PARA A NUVEM
+    // ========================================================
     const localDb = await loadDB();
 
-    // 1. Produtos
+    // Enviar produtos
     for (const p of localDb.products || []) {
       const totalStock = (p.stockLoja1 ?? p.stock ?? 0) + (p.stockLoja2 ?? 0);
       await sql`
@@ -879,14 +993,8 @@ export async function syncAllToCloud() {
           updated_at = EXCLUDED.updated_at
       `;
     }
-    const localProductIds = (localDb.products || []).map(p => p.id);
-    if (localProductIds.length > 0) {
-      await sql`DELETE FROM products WHERE NOT (id = ANY(${localProductIds}))`;
-    } else {
-      await sql`DELETE FROM products`;
-    }
 
-    // 2. Vendas
+    // Enviar vendas
     for (const s of localDb.sales || []) {
       await sql`
         INSERT INTO sales (id, timestamp, total_price, total_cost, profit, payment_method, store_id, items, delivery_details)
@@ -902,14 +1010,8 @@ export async function syncAllToCloud() {
           delivery_details = EXCLUDED.delivery_details
       `;
     }
-    const localSaleIds = (localDb.sales || []).map(s => s.id);
-    if (localSaleIds.length > 0) {
-      await sql`DELETE FROM sales WHERE NOT (id = ANY(${localSaleIds}))`;
-    } else {
-      await sql`DELETE FROM sales`;
-    }
 
-    // 3. Despesas
+    // Enviar despesas
     for (const e of localDb.expenses || []) {
       await sql`
         INSERT INTO expenses (id, timestamp, description, amount, category, store_id)
@@ -922,14 +1024,8 @@ export async function syncAllToCloud() {
           store_id = EXCLUDED.store_id
       `;
     }
-    const localExpenseIds = (localDb.expenses || []).map(e => e.id);
-    if (localExpenseIds.length > 0) {
-      await sql`DELETE FROM expenses WHERE NOT (id = ANY(${localExpenseIds}))`;
-    } else {
-      await sql`DELETE FROM expenses`;
-    }
 
-    // 4. Fechamentos
+    // Enviar fechamentos
     for (const c of localDb.closures || []) {
       await sql`
         INSERT INTO closures (id, store_id, date, closed_at, expected_cash, actual_cash, difference, observations)
@@ -944,14 +1040,8 @@ export async function syncAllToCloud() {
           observations = EXCLUDED.observations
       `;
     }
-    const localClosureIds = (localDb.closures || []).map(c => c.id);
-    if (localClosureIds.length > 0) {
-      await sql`DELETE FROM closures WHERE NOT (id = ANY(${localClosureIds}))`;
-    } else {
-      await sql`DELETE FROM closures`;
-    }
 
-    // 5. Fiados
+    // Enviar fiados
     for (const ca of localDb.creditAccounts || []) {
       await sql`
         INSERT INTO credit_accounts (id, name, address, phone, balance, history)
@@ -964,14 +1054,8 @@ export async function syncAllToCloud() {
           history = EXCLUDED.history
       `;
     }
-    const localAccountIds = (localDb.creditAccounts || []).map(ca => ca.id);
-    if (localAccountIds.length > 0) {
-      await sql`DELETE FROM credit_accounts WHERE NOT (id = ANY(${localAccountIds}))`;
-    } else {
-      await sql`DELETE FROM credit_accounts`;
-    }
 
-    console.log("✅ Espelhamento de Tabelas concluído.");
+    console.log("✅ Sincronização Bidirecional concluída.");
     return { success: true, data: localDb };
   } catch (err) {
     console.error("Erro durante o espelhamento das Tabelas:", err.message);
