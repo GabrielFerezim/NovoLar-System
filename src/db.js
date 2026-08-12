@@ -336,11 +336,8 @@ export async function saveProduct(product) {
   }
   await saveDB(db);
 
-  // 3. Tentar recarregar nuvem completa para garantir sincronia absoluta
-  const cloudRes = await syncAllFromCloud();
-  if (cloudRes && cloudRes.success && cloudRes.data && cloudRes.data.products) {
-    return cloudRes.data.products;
-  }
+  // Disparar sincronização em segundo plano sem travar nem sobrescrever o retorno local
+  syncAllFromCloud().catch(err => console.warn("Background sync error after saveProduct:", err));
 
   return db.products;
 }
@@ -358,10 +355,7 @@ export async function deleteProduct(id) {
     await addToSyncQueue('delete_product', pId);
   }
 
-  const cloudRes = await syncAllFromCloud();
-  if (cloudRes && cloudRes.success && cloudRes.data && cloudRes.data.products) {
-    return cloudRes.data.products;
-  }
+  syncAllFromCloud().catch(err => console.warn("Background sync error after deleteProduct:", err));
   return db.products;
 }
 
@@ -472,11 +466,7 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
     await addToSyncQueue('sale', newSale.id);
   }
 
-  const cloudRes = await syncAllFromCloud();
-  if (cloudRes && cloudRes.success && cloudRes.data) {
-    return { sales: cloudRes.data.sales, products: cloudRes.data.products };
-  }
-
+  syncAllFromCloud().catch(err => console.warn("Background sync error after registerSale:", err));
   return { sales: db.sales, products: db.products };
 }
 
@@ -564,11 +554,7 @@ export async function saveExpense(expense) {
     await addToSyncQueue('expense', targetExpense.id);
   }
   
-  const cloudRes = await syncAllFromCloud();
-  if (cloudRes && cloudRes.success && cloudRes.data && cloudRes.data.expenses) {
-    return cloudRes.data.expenses;
-  }
-
+  syncAllFromCloud().catch(err => console.warn("Background sync error after saveExpense:", err));
   return db.expenses;
 }
 
@@ -585,11 +571,7 @@ export async function deleteExpense(id) {
     await addToSyncQueue('delete_expense', expId);
   }
 
-  const cloudRes = await syncAllFromCloud();
-  if (cloudRes && cloudRes.success && cloudRes.data && cloudRes.data.expenses) {
-    return cloudRes.data.expenses;
-  }
-
+  syncAllFromCloud().catch(err => console.warn("Background sync error after deleteExpense:", err));
   return db.expenses;
 }
 
