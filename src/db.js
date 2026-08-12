@@ -121,33 +121,11 @@ export async function syncAllFromCloud() {
       supabase.from('credit_accounts').select('*')
     ]);
 
-    // Validar erros - se houver erro crítico, abortamos para não apagar a base local
-    if (resProducts.error) throw new Error(`Erro ao buscar produtos: ${resProducts.error.message}`);
-    if (resSales.error) throw new Error(`Erro ao buscar vendas: ${resSales.error.message}`);
-    if (resExpenses.error) throw new Error(`Erro ao buscar despesas: ${resExpenses.error.message}`);
-
-    const cloudProducts = resProducts.data || [];
-    const cloudSales = resSales.data || [];
-    const cloudExpenses = resExpenses.data || [];
-
-    // Fechamentos e Fiados podem não ter a tabela criada ainda (caso não tenham rodado o SQL)
-    let cloudClosures = resClosures.data || [];
-    if (resClosures.error) {
-      if (resClosures.error.message.includes('relation "closures" does not exist')) {
-        cloudClosures = [];
-      } else {
-        throw new Error(`Erro ao buscar fechamentos: ${resClosures.error.message}`);
-      }
-    }
-
-    let cloudAccounts = resAccounts.data || [];
-    if (resAccounts.error) {
-      if (resAccounts.error.message.includes('relation "credit_accounts" does not exist')) {
-        cloudAccounts = [];
-      } else {
-        throw new Error(`Erro ao buscar fiados: ${resAccounts.error.message}`);
-      }
-    }
+    const cloudProducts = resProducts.error ? [] : (resProducts.data || []);
+    const cloudSales = resSales.error ? [] : (resSales.data || []);
+    const cloudExpenses = resExpenses.error ? [] : (resExpenses.data || []);
+    const cloudClosures = resClosures.error ? [] : (resClosures.data || []);
+    const cloudAccounts = resAccounts.error ? [] : (resAccounts.data || []);
 
     // Carregar banco local para manter a fila de sync e dados extras
     const localDb = await loadDB();
@@ -240,6 +218,31 @@ export async function syncAllFromCloud() {
     const localOnlyExpenses = (localDb.expenses || []).filter(
       le => !le.synced && !expenses.find(e => String(e.id) === String(le.id))
     );
+
+    // Auto-sync: Enviar para a nuvem qualquer produto local que ainda NÃO esteja no Supabase
+    for (const lp of localOnlyProducts) {
+      try {
+        const stock1 = lp.stockLoja1 ?? lp.stock ?? 0;
+        const stock2 = lp.stockLoja2 ?? 0;
+        const cleanDesc = (lp.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
+        const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
+        await supabase.from('products').upsert({
+          id: String(lp.id),
+          code: String(lp.code || '').trim(),
+          name: String(lp.name || '').trim(),
+          description: supabaseDesc,
+          cost_price: parseFloat(lp.costPrice) || 0,
+          sale_price: parseFloat(lp.salePrice) || 0,
+          stock: stock1 + stock2,
+          min_stock: parseInt(lp.minStock) || 0,
+          category: lp.category || 'Materiais Básicos',
+          unit: lp.unit || 'Unidade',
+          updated_at: new Date().toISOString()
+        });
+      } catch (err) {
+        console.warn("Erro ao sincronizar produto local com Supabase:", err);
+      }
+    }
 
     const mergedDb = {
       ...localDb,
@@ -660,6 +663,34 @@ export async function runBackgroundSync() {
         
         freshDb.products = merged;
         await saveDB(freshDb);
+
+        // Enviar para a nuvem qualquer produto local que não esteja no Supabase
+        const cloudIds = new Set(cloudProducts.map(cp => String(cp.id)));
+        for (const lp of localProducts) {
+          if (!cloudIds.has(String(lp.id))) {
+            try {
+              const stock1 = lp.stockLoja1 ?? lp.stock ?? 0;
+              const stock2 = lp.stockLoja2 ?? 0;
+              const cleanDesc = (lp.description || '').replace(/\s?\[STOCKS:\d+\|\d+\]$/, '');
+              const supabaseDesc = `${cleanDesc} [STOCKS:${stock1}|${stock2}]`.trim();
+              await supabase.from('products').upsert({
+                id: String(lp.id),
+                code: String(lp.code || '').trim(),
+                name: String(lp.name || '').trim(),
+                description: supabaseDesc,
+                cost_price: parseFloat(lp.costPrice) || 0,
+                sale_price: parseFloat(lp.salePrice) || 0,
+                stock: stock1 + stock2,
+                min_stock: parseInt(lp.minStock) || 0,
+                category: lp.category || 'Materiais Básicos',
+                unit: lp.unit || 'Unidade',
+                updated_at: new Date().toISOString()
+              });
+            } catch (err) {
+              console.warn("Erro ao enviar produto local em background para o Supabase:", err);
+            }
+          }
+        }
 
         // ===== Sync bidirecional de Contas de Fiado =====
         try {

@@ -282,7 +282,10 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. Carrega SEMPRE os dados locais primeiro para exibir imediatamente na tela
+      // 1. Tentar sincronizar a nuvem primeiro para mesclar todos os dados
+      await syncAllFromCloud();
+
+      // 2. Recarregar o banco compilado (com a fusão completa de dados locais + nuvem)
       const db = await loadDB();
       setProducts(db.products || []);
       setSales(db.sales || []);
@@ -292,18 +295,13 @@ export default function App() {
 
       const pendings = await getPendingClosures(getStoreId());
       setPendingClosures(pendings);
-
-      // 2. Em seguida, tenta buscar atualizações da nuvem (sem travar se estiver offline ou com falha)
-      const res = await syncAllFromCloud();
-      if (res && res.success && res.data) {
-        setProducts(res.data.products || []);
-        setSales(res.data.sales || []);
-        setExpenses(res.data.expenses || []);
-        setCreditAccounts(res.data.creditAccounts || []);
-        setSyncPendingCount(res.data.syncQueue ? res.data.syncQueue.length : 0);
-      }
     } catch (error) {
       console.error("Erro ao carregar dados do banco:", error);
+      const db = await loadDB();
+      setProducts(db.products || []);
+      setSales(db.sales || []);
+      setExpenses(db.expenses || []);
+      setCreditAccounts(db.creditAccounts || []);
     } finally {
       setLoading(false);
     }
@@ -318,15 +316,17 @@ export default function App() {
 
       if (res.status === 'success' || res.status === 'syncing') {
         setSyncStatus('Sincronizado');
-        setProducts(db.products || []);
-        setSales(db.sales || []);
-        setExpenses(db.expenses || []);
-        setCreditAccounts(db.creditAccounts || []);
       } else if (res.status === 'error') {
         setSyncStatus(res.message);
       } else {
         setSyncStatus(pendingJobs > 0 ? `${pendingJobs} pendentes` : 'Offline');
       }
+
+      // Atualizar sempre a interface com os dados mais recentes do banco local/nuvem
+      setProducts(db.products || []);
+      setSales(db.sales || []);
+      setExpenses(db.expenses || []);
+      setCreditAccounts(db.creditAccounts || []);
     } catch (e) {
       setSyncStatus('Offline');
     }
