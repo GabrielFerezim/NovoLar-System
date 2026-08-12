@@ -282,26 +282,27 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. Tentar sincronizar a nuvem primeiro para mesclar todos os dados
-      await syncAllFromCloud();
-
-      // 2. Recarregar o banco compilado (com a fusão completa de dados locais + nuvem)
-      const db = await loadDB();
-      setProducts(db.products || []);
-      setSales(db.sales || []);
-      setExpenses(db.expenses || []);
-      setCreditAccounts(db.creditAccounts || []);
-      setSyncPendingCount(db.syncQueue ? db.syncQueue.length : 0);
+      // 1. O App SEMPRE carrega os dados locais PRIMEIRO (Exibição instantânea 0ms)
+      const localDb = await loadDB();
+      setProducts(localDb.products || []);
+      setSales(localDb.sales || []);
+      setExpenses(localDb.expenses || []);
+      setCreditAccounts(localDb.creditAccounts || []);
+      setSyncPendingCount(localDb.syncQueue ? localDb.syncQueue.length : 0);
 
       const pendings = await getPendingClosures(getStoreId());
       setPendingClosures(pendings);
+
+      // 2. Transmite produtos locais para o Supabase (para a Vercel ler) e atualiza em background
+      const res = await syncAllFromCloud();
+      if (res && res.success && res.data) {
+        setProducts(res.data.products || []);
+        setSales(res.data.sales || []);
+        setExpenses(res.data.expenses || []);
+        setCreditAccounts(res.data.creditAccounts || []);
+      }
     } catch (error) {
-      console.error("Erro ao carregar dados do banco:", error);
-      const db = await loadDB();
-      setProducts(db.products || []);
-      setSales(db.sales || []);
-      setExpenses(db.expenses || []);
-      setCreditAccounts(db.creditAccounts || []);
+      console.error("Erro ao sincronizar dados com nuvem:", error);
     } finally {
       setLoading(false);
     }

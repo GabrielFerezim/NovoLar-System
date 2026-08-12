@@ -208,19 +208,13 @@ export async function syncAllFromCloud() {
       history: Array.isArray(ca.history) ? ca.history : []
     }));
 
-    // Mesclar: cloud é a verdade, mas mantemos itens locais pendentes de sync
-    const localOnlyProducts = (localDb.products || []).filter(
-      lp => !products.find(p => String(p.id) === String(lp.id))
-    );
-    const localOnlySales = (localDb.sales || []).filter(
-      ls => !ls.synced && !sales.find(s => String(s.id) === String(ls.id))
-    );
-    const localOnlyExpenses = (localDb.expenses || []).filter(
-      le => !le.synced && !expenses.find(e => String(e.id) === String(le.id))
+    // Mesclar: se for Electron, o banco local é O MESTRE. Itens locais NUNCA são apagados por retorno da nuvem.
+    const cloudOnlyProducts = (products || []).filter(
+      cp => !(localDb.products || []).find(lp => String(lp.id) === String(cp.id))
     );
 
-    // Auto-sync: Enviar para a nuvem qualquer produto local que ainda NÃO esteja no Supabase
-    for (const lp of localOnlyProducts) {
+    // Transmitir para a nuvem qualquer produto local do App (App -> Nuvem para o Vercel ler)
+    for (const lp of localDb.products || []) {
       try {
         const stock1 = lp.stockLoja1 ?? lp.stock ?? 0;
         const stock2 = lp.stockLoja2 ?? 0;
@@ -244,13 +238,26 @@ export async function syncAllFromCloud() {
       }
     }
 
+    // Se houver produtos novos na nuvem que não existem localmente, adiciona ao banco local
+    const mergedProducts = isElectron
+      ? [...(localDb.products || []), ...cloudOnlyProducts]
+      : (products.length > 0 ? products : (localDb.products || []));
+
+    const mergedSales = isElectron
+      ? (localDb.sales || [])
+      : (sales.length > 0 ? sales : (localDb.sales || []));
+
+    const mergedExpenses = isElectron
+      ? (localDb.expenses || [])
+      : (expenses.length > 0 ? expenses : (localDb.expenses || []));
+
     const mergedDb = {
       ...localDb,
-      products: [...products, ...localOnlyProducts],
-      sales: [...sales, ...localOnlySales],
-      expenses: [...expenses, ...localOnlyExpenses],
-      closures,
-      creditAccounts,
+      products: mergedProducts,
+      sales: mergedSales,
+      expenses: mergedExpenses,
+      closures: closures.length > 0 ? closures : (localDb.closures || []),
+      creditAccounts: creditAccounts.length > 0 ? creditAccounts : (localDb.creditAccounts || []),
       syncQueue: localDb.syncQueue || []
     };
 
