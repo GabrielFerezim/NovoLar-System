@@ -3,6 +3,17 @@ import { sql } from './neon';
 
 const isElectron = () => typeof window !== 'undefined' && window.electronAPI !== undefined;
 
+function safeParseJSON(val, defaultVal = []) {
+  if (val === null || val === undefined) return defaultVal;
+  if (typeof val === 'object' || Array.isArray(val)) return val;
+  try {
+    return JSON.parse(val);
+  } catch (e) {
+    console.error("Falha ao analisar JSON:", val, e);
+    return defaultVal;
+  }
+}
+
 const initialMockData = {
   products: [],
   sales: [],
@@ -107,15 +118,15 @@ export async function loadDB() {
         totalPrice: parseFloat(s.totalPrice) || 0,
         totalCost: parseFloat(s.totalCost) || 0,
         profit: parseFloat(s.profit) || 0,
-        items: JSON.parse(s.items || '[]'),
-        deliveryDetails: s.deliveryDetails ? JSON.parse(s.deliveryDetails) : null,
+        items: safeParseJSON(s.items, []),
+        deliveryDetails: safeParseJSON(s.deliveryDetails, null),
         synced: true
       }));
 
       const parsedAccounts = creditAccounts.map(ca => ({
         ...ca,
         balance: parseFloat(ca.balance) || 0,
-        history: JSON.parse(ca.history || '[]')
+        history: safeParseJSON(ca.history, [])
       }));
 
       const formattedProducts = products.map(p => ({
@@ -164,8 +175,8 @@ export async function loadDB() {
         profit: parseFloat(s.profit) || 0,
         paymentMethod: s.payment_method,
         storeId: s.store_id || 'loja-1',
-        items: JSON.parse(s.items || '[]'),
-        deliveryDetails: s.delivery_details ? JSON.parse(s.delivery_details) : null,
+        items: safeParseJSON(s.items, []),
+        deliveryDetails: safeParseJSON(s.delivery_details, null),
         synced: true
       }));
 
@@ -175,7 +186,7 @@ export async function loadDB() {
         address: ca.address,
         phone: ca.phone,
         balance: parseFloat(ca.balance) || 0,
-        history: JSON.parse(ca.history || '[]')
+        history: safeParseJSON(ca.history, [])
       }));
 
       const formattedProducts = (productsRes || []).map(p => ({
