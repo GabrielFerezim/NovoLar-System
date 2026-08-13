@@ -1391,6 +1391,7 @@ export default function App() {
           {activeTab === 'admin-vault' && (
             <VaultView
               vaultTransactions={vaultTransactions}
+              onSaveVaultTransaction={handleSaveVaultTransaction}
               onDeleteVaultTransaction={handleDeleteVaultTransaction}
               storeId={storeId}
             />
@@ -5505,8 +5506,11 @@ function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
 // ==========================================
 // 8. COMPONENTE: CONTROLE DO COFRE (VAULT)
 // ==========================================
-function VaultView({ vaultTransactions, onDeleteVaultTransaction, storeId }) {
-  const [simulationValue, setSimulationValue] = useState('');
+function VaultView({ vaultTransactions, onSaveVaultTransaction, onDeleteVaultTransaction, storeId }) {
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [withdrawalAmount, setWithdrawalAmount] = useState('');
+  const [withdrawalDesc, setWithdrawalDesc] = useState('');
+
   const filteredTransactions = vaultTransactions.filter(vt => vt.storeId === storeId);
 
   const totalDeposits = filteredTransactions
@@ -5546,14 +5550,46 @@ function VaultView({ vaultTransactions, onDeleteVaultTransaction, storeId }) {
   const daysWithDeposits = Object.keys(depositDates).length;
   const avgDailyDeposit = daysWithDeposits > 0 ? (totalDeposits / daysWithDeposits) : 0;
 
-  const currentSimValue = simulationValue === '' 
-    ? (avgDailyDeposit > 0 ? parseFloat(avgDailyDeposit.toFixed(2)) : 100) 
-    : (parseFloat(simulationValue) || 0);
-
   const formatCurrency = (val) => val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const handleWithdrawConfirm = (e) => {
+    e.preventDefault();
+    const amt = parseFloat(withdrawalAmount.replace(',', '.')) || 0;
+    if (amt <= 0) {
+      alert("Por favor, digite um valor válido maior que zero.");
+      return;
+    }
+    if (amt > balance) {
+      alert(`Você não pode retirar mais do que o saldo atual do cofre (R$ ${balance.toFixed(2)}).`);
+      return;
+    }
+
+    onSaveVaultTransaction({
+      type: 'withdrawal',
+      amount: amt,
+      description: withdrawalDesc.trim() || 'Retirada manual do cofre',
+      date: new Date().toISOString().split('T')[0],
+      storeId
+    });
+
+    setWithdrawalAmount('');
+    setWithdrawalDesc('');
+    setShowWithdrawModal(false);
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      {/* Linha do Botão de Operação */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-8px' }}>
+        <button
+          onClick={() => setShowWithdrawModal(true)}
+          className="btn-primary"
+          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 20px', fontWeight: '800', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--brand-red)' }}
+        >
+          <TrendingDown size={18} /> Registrar Retirada do Cofre
+        </button>
+      </div>
+
       {/* Cards de Resumo */}
       <div className="dashboard-summary-grid">
         <div className="kpi-card profit">
@@ -5593,54 +5629,71 @@ function VaultView({ vaultTransactions, onDeleteVaultTransaction, storeId }) {
         </div>
       </div>
 
-      {/* Widget de Estimativa/Simulação */}
+      {/* Widget de Estimativa/Simulação Automática */}
       <div className="section-card">
         <div className="card-header">
           <h3 className="card-title">
-            <Sparkles size={20} className="text-primary" /> Simulador de Acúmulo do Cofre
+            <Sparkles size={20} className="text-primary" /> Simulador de Acúmulo Automático do Cofre
           </h3>
         </div>
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-          Se você continuar guardando dinheiro no cofre, veja quanto acumulará ao longo do tempo (calculado somando o saldo atual com os depósitos diários simulados):
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '16px' }}>
+          Veja abaixo a estimativa automática do saldo futuro acumulado no cofre (saldo atual de <strong>R$ {formatCurrency(balance)}</strong> somado aos depósitos diários simulados):
         </p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', marginTop: '12px', alignItems: 'center' }}>
-          <div className="form-group">
-            <label>Valor Diário de Sangria para Simular (R$):</label>
-            <input
-              type="number"
-              placeholder={avgDailyDeposit > 0 ? avgDailyDeposit.toFixed(2) : "100.00"}
-              value={simulationValue}
-              onChange={(e) => setSimulationValue(e.target.value)}
-              style={{ padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff', fontSize: '14px' }}
-            />
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
-              Média diária atual registrada: <strong>R$ {formatCurrency(avgDailyDeposit)}</strong>
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', backgroundColor: 'var(--bg-tertiary)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Saldo Atual no Cofre:</span>
-              <strong style={{ color: 'var(--text-primary)' }}>R$ {formatCurrency(balance)}</strong>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Em 7 dias (1 semana):</span>
-              <strong style={{ color: 'var(--success)' }}>R$ {formatCurrency(balance + (currentSimValue * 7))}</strong>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Em 30 dias (1 mês):</span>
-              <strong style={{ color: 'var(--success)' }}>R$ {formatCurrency(balance + (currentSimValue * 30))}</strong>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Em 90 dias (1 trimestre):</span>
-              <strong style={{ color: 'var(--success)' }}>R$ {formatCurrency(balance + (currentSimValue * 90))}</strong>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Em 365 dias (1 ano):</span>
-              <strong style={{ color: 'var(--success)' }}>R$ {formatCurrency(balance + (currentSimValue * 365))}</strong>
-            </div>
-          </div>
+        <div className="table-container" style={{ overflowX: 'auto' }}>
+          <table className="custom-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)' }}>
+                <th style={{ padding: '12px' }}>Se você guardar...</th>
+                <th style={{ padding: '12px' }}>Em 7 dias (1 sem.)</th>
+                <th style={{ padding: '12px' }}>Em 30 dias (1 mês)</th>
+                <th style={{ padding: '12px' }}>Em 90 dias (1 trim.)</th>
+                <th style={{ padding: '12px' }}>Em 365 dias (1 ano)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* Linha com a Média Real */}
+              <tr style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderBottom: '1px solid var(--border-color)' }}>
+                <td style={{ padding: '12px' }}><strong>Sua Média Real (R$ {formatCurrency(avgDailyDeposit)}/dia)</strong></td>
+                <td style={{ padding: '12px', color: 'var(--success)', fontWeight: '700' }}>R$ {formatCurrency(balance + (avgDailyDeposit * 7))}</td>
+                <td style={{ padding: '12px', color: 'var(--success)', fontWeight: '700' }}>R$ {formatCurrency(balance + (avgDailyDeposit * 30))}</td>
+                <td style={{ padding: '12px', color: 'var(--success)', fontWeight: '700' }}>R$ {formatCurrency(balance + (avgDailyDeposit * 90))}</td>
+                <td style={{ padding: '12px', color: 'var(--success)', fontWeight: '700' }}>R$ {formatCurrency(balance + (avgDailyDeposit * 365))}</td>
+              </tr>
+              {/* R$ 50/dia */}
+              <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                <td style={{ padding: '12px' }}>Guardando R$ 50,00/dia</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (50 * 7))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (50 * 30))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (50 * 90))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (50 * 365))}</td>
+              </tr>
+              {/* R$ 100/dia */}
+              <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                <td style={{ padding: '12px' }}>Guardando R$ 100,00/dia</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (100 * 7))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (100 * 30))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (100 * 90))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (100 * 365))}</td>
+              </tr>
+              {/* R$ 200/dia */}
+              <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                <td style={{ padding: '12px' }}>Guardando R$ 200,00/dia</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (200 * 7))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (200 * 30))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (200 * 90))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (200 * 365))}</td>
+              </tr>
+              {/* R$ 500/dia */}
+              <tr>
+                <td style={{ padding: '12px' }}>Guardando R$ 500,00/dia</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (500 * 7))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (500 * 30))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (500 * 90))}</td>
+                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>R$ {formatCurrency(balance + (500 * 365))}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -5743,6 +5796,60 @@ function VaultView({ vaultTransactions, onDeleteVaultTransaction, storeId }) {
           </div>
         )}
       </div>
+
+      {/* Modal de Retirada do Cofre */}
+      {showWithdrawModal && (
+        <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <div className="modal-content glass-card" style={{ width: '100%', maxWidth: '450px', padding: '24px', borderRadius: 'var(--radius-lg)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
+                <TrendingDown size={20} className="text-danger" /> Registrar Retirada do Cofre
+              </h2>
+              <button onClick={() => setShowWithdrawModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={20} /></button>
+            </div>
+
+            <form onSubmit={handleWithdrawConfirm}>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Saldo Disponível no Cofre</label>
+                <div style={{ padding: '10px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontWeight: '700', color: 'var(--success)' }}>
+                  R$ {formatCurrency(balance)}
+                </div>
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Valor da Retirada (R$)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="form-input"
+                  required
+                  placeholder="0.00"
+                  value={withdrawalAmount}
+                  onChange={(e) => setWithdrawalAmount(e.target.value)}
+                  style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Motivo / Descrição</label>
+                <textarea
+                  className="form-input"
+                  rows="2"
+                  placeholder="Ex: Retirada de segurança para depósito em conta ou pagamentos"
+                  value={withdrawalDesc}
+                  onChange={(e) => setWithdrawalDesc(e.target.value)}
+                  style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff', resize: 'vertical' }}
+                ></textarea>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                <button type="button" onClick={() => setShowWithdrawModal(false)} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: '600' }}>Cancelar</button>
+                <button type="submit" className="btn-primary" style={{ padding: '10px 24px', fontWeight: '700', backgroundColor: 'var(--danger)' }}>Confirmar Retirada</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
