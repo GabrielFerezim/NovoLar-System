@@ -5506,6 +5506,7 @@ function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
 // 8. COMPONENTE: CONTROLE DO COFRE (VAULT)
 // ==========================================
 function VaultView({ vaultTransactions, onDeleteVaultTransaction, storeId }) {
+  const [simulationValue, setSimulationValue] = useState('');
   const filteredTransactions = vaultTransactions.filter(vt => vt.storeId === storeId);
 
   const totalDeposits = filteredTransactions
@@ -5536,6 +5537,20 @@ function VaultView({ vaultTransactions, onDeleteVaultTransaction, storeId }) {
 
   const chartData = balanceHistory.slice(-10);
   const maxAmount = Math.max(...chartData.map(d => d.amount), 1);
+
+  // Calcular média diária de depósitos (sangrias)
+  const depositDates = {};
+  filteredTransactions.filter(vt => vt.type === 'deposit').forEach(vt => {
+    depositDates[vt.date] = (depositDates[vt.date] || 0) + vt.amount;
+  });
+  const daysWithDeposits = Object.keys(depositDates).length;
+  const avgDailyDeposit = daysWithDeposits > 0 ? (totalDeposits / daysWithDeposits) : 0;
+
+  const currentSimValue = simulationValue === '' 
+    ? (avgDailyDeposit > 0 ? parseFloat(avgDailyDeposit.toFixed(2)) : 100) 
+    : (parseFloat(simulationValue) || 0);
+
+  const formatCurrency = (val) => val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -5574,6 +5589,57 @@ function VaultView({ vaultTransactions, onDeleteVaultTransaction, storeId }) {
             <span className="kpi-value" style={{ color: 'var(--danger)' }}>
               R$ {totalWithdrawals.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Widget de Estimativa/Simulação */}
+      <div className="section-card">
+        <div className="card-header">
+          <h3 className="card-title">
+            <Sparkles size={20} className="text-primary" /> Simulador de Acúmulo do Cofre
+          </h3>
+        </div>
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+          Se você continuar guardando dinheiro no cofre, veja quanto acumulará ao longo do tempo (calculado somando o saldo atual com os depósitos diários simulados):
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', marginTop: '12px', alignItems: 'center' }}>
+          <div className="form-group">
+            <label>Valor Diário de Sangria para Simular (R$):</label>
+            <input
+              type="number"
+              placeholder={avgDailyDeposit > 0 ? avgDailyDeposit.toFixed(2) : "100.00"}
+              value={simulationValue}
+              onChange={(e) => setSimulationValue(e.target.value)}
+              style={{ padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff', fontSize: '14px' }}
+            />
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+              Média diária atual registrada: <strong>R$ {formatCurrency(avgDailyDeposit)}</strong>
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', backgroundColor: 'var(--bg-tertiary)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Saldo Atual no Cofre:</span>
+              <strong style={{ color: 'var(--text-primary)' }}>R$ {formatCurrency(balance)}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Em 7 dias (1 semana):</span>
+              <strong style={{ color: 'var(--success)' }}>R$ {formatCurrency(balance + (currentSimValue * 7))}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Em 30 dias (1 mês):</span>
+              <strong style={{ color: 'var(--success)' }}>R$ {formatCurrency(balance + (currentSimValue * 30))}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Em 90 dias (1 trimestre):</span>
+              <strong style={{ color: 'var(--success)' }}>R$ {formatCurrency(balance + (currentSimValue * 90))}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Em 365 dias (1 ano):</span>
+              <strong style={{ color: 'var(--success)' }}>R$ {formatCurrency(balance + (currentSimValue * 365))}</strong>
+            </div>
           </div>
         </div>
       </div>
@@ -5954,6 +6020,13 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
   const handleSave = () => {
     const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;
     const sangriaVal = parseFloat(sangria.replace(',', '.')) || 0;
+
+    const maxAllowed = Math.max(0, expectedCashBeforeSangria);
+    if (sangriaVal > maxAllowed) {
+      alert(`A sangria (R$ ${sangriaVal.toFixed(2)}) não pode ser maior do que o dinheiro disponível em caixa (R$ ${maxAllowed.toFixed(2)}).`);
+      return;
+    }
+
     const finalExpected = expectedCashBeforeSangria - sangriaVal;
     const diff = cashVal - finalExpected;
 
@@ -6039,6 +6112,9 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
             onChange={(e) => setSangria(e.target.value)}
             style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
           />
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+            Máximo disponível para sangria: <strong>R$ {Math.max(0, expectedCashBeforeSangria).toFixed(2)}</strong>
+          </span>
         </div>
 
         <div className="form-group" style={{ marginBottom: '16px' }}>
