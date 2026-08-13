@@ -108,7 +108,7 @@ export default function App() {
 
   // Auto-expandir menu de administração quando uma aba admin estiver ativa
   useEffect(() => {
-    if (activeTab.startsWith('admin')) {
+    if (activeTab.startsWith('admin') && activeTab !== 'admin-deliveries') {
       setIsAdminMenuOpen(true);
     }
   }, [activeTab]);
@@ -895,7 +895,16 @@ export default function App() {
           </li>
           <li>
             <button
-              className={`menu-item-btn ${activeTab.startsWith('admin') ? 'active' : ''}`}
+              className={`menu-item-btn ${activeTab === 'admin-deliveries' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('admin-deliveries'); setIsMobileMenuOpen(false); }}
+            >
+              <Truck size={20} />
+              Controle de Entregas
+            </button>
+          </li>
+          <li>
+            <button
+              className={`menu-item-btn ${(activeTab.startsWith('admin') && activeTab !== 'admin-deliveries') ? 'active' : ''}`}
               onClick={() => setIsAdminMenuOpen(!isAdminMenuOpen)}
               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}
             >
@@ -933,15 +942,6 @@ export default function App() {
                   >
                     <Sparkles size={16} />
                     Insights (IA)
-                  </button>
-                </li>
-                <li>
-                  <button
-                    className={`submenu-item-btn ${activeTab === 'admin-deliveries' ? 'active' : ''}`}
-                    onClick={() => { setActiveTab('admin-deliveries'); setIsMobileMenuOpen(false); }}
-                  >
-                    <Truck size={16} />
-                    Controle de Entregas
                   </button>
                 </li>
                 <li>
@@ -1442,7 +1442,7 @@ export default function App() {
       )}
 
       {/* MODAL DE FECHAMENTO DE CAIXA */}
-      {closureModalOpen && !pendingClosures.length && (
+      {closureModalOpen && (
         <ClosureModal
           date={closureTargetDate}
           sales={sales.filter(s => s.paymentMethod !== 'Fiado')}
