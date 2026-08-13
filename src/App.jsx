@@ -6,6 +6,7 @@ import {
   History,
   DollarSign,
   TrendingUp,
+  TrendingDown,
   AlertTriangle,
   Barcode,
   Plus,
@@ -819,6 +820,15 @@ export default function App() {
   const handleClosure = async (closureData) => {
     try {
       await saveClosure(closureData);
+      if (closureData.sangriaAmount > 0) {
+        await handleSaveVaultTransaction({
+          type: 'deposit',
+          amount: closureData.sangriaAmount,
+          description: `Sangria automática via Fechamento de Caixa do dia ${closureData.date.split('-').reverse().join('/')}`,
+          date: closureData.date,
+          storeId: storeId
+        });
+      }
       showScanNotification(`Caixa fechado para o dia ${closureData.date}`);
       setClosureModalOpen(false);
       setClosureTargetDate(null);
@@ -1381,7 +1391,6 @@ export default function App() {
           {activeTab === 'admin-vault' && (
             <VaultView
               vaultTransactions={vaultTransactions}
-              onSaveVaultTransaction={handleSaveVaultTransaction}
               onDeleteVaultTransaction={handleDeleteVaultTransaction}
               storeId={storeId}
             />
@@ -5496,39 +5505,37 @@ function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
 // ==========================================
 // 8. COMPONENTE: CONTROLE DO COFRE (VAULT)
 // ==========================================
-function VaultView({ vaultTransactions, onSaveVaultTransaction, onDeleteVaultTransaction, storeId }) {
-  const [amount, setAmount] = useState('');
-  const [type, setType] = useState('deposit'); // 'deposit' | 'withdrawal'
-  const [description, setDescription] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-
+function VaultView({ vaultTransactions, onDeleteVaultTransaction, storeId }) {
   const filteredTransactions = vaultTransactions.filter(vt => vt.storeId === storeId);
 
-  const balance = filteredTransactions.reduce((acc, vt) => {
-    if (vt.type === 'deposit') return acc + vt.amount;
-    if (vt.type === 'withdrawal') return acc - vt.amount;
-    return acc;
-  }, 0);
+  const totalDeposits = filteredTransactions
+    .filter(vt => vt.type === 'deposit')
+    .reduce((sum, vt) => sum + vt.amount, 0);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const parsedAmount = parseFloat(amount.replace(',', '.')) || 0;
-    if (parsedAmount <= 0) {
-      alert("Por favor, digite um valor maior que zero.");
-      return;
+  const totalWithdrawals = filteredTransactions
+    .filter(vt => vt.type === 'withdrawal')
+    .reduce((sum, vt) => sum + vt.amount, 0);
+
+  const balance = totalDeposits - totalWithdrawals;
+
+  // Gerar dados históricos para o gráfico de linha/barra acumulado do cofre
+  const sortedTx = [...filteredTransactions].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  let cumulative = 0;
+  const balanceHistory = sortedTx.map(tx => {
+    if (tx.type === 'deposit') {
+      cumulative += tx.amount;
+    } else {
+      cumulative -= tx.amount;
     }
+    return {
+      timestamp: tx.timestamp,
+      amount: cumulative,
+      label: new Date(tx.timestamp).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+    };
+  });
 
-    onSaveVaultTransaction({
-      type,
-      amount: parsedAmount,
-      description: description.trim() || (type === 'deposit' ? "Retirada de caixa para cofre" : "Reforço de troco no caixa"),
-      date,
-      storeId
-    });
-
-    setAmount('');
-    setDescription('');
-  };
+  const chartData = balanceHistory.slice(-10);
+  const maxAmount = Math.max(...chartData.map(d => d.amount), 1);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -5539,7 +5546,7 @@ function VaultView({ vaultTransactions, onSaveVaultTransaction, onDeleteVaultTra
             <Lock size={20} />
           </div>
           <div className="kpi-data">
-            <span className="kpi-label">Saldo Atual do Cofre</span>
+            <span className="kpi-label">Saldo Disponível no Cofre</span>
             <span className="kpi-value" style={{ color: 'var(--success)' }}>
               R$ {balance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
@@ -5548,138 +5555,127 @@ function VaultView({ vaultTransactions, onSaveVaultTransaction, onDeleteVaultTra
 
         <div className="kpi-card sales">
           <div className="kpi-icon-wrapper">
-            <Coins size={20} />
+            <TrendingUp size={20} />
           </div>
           <div className="kpi-data">
-            <span className="kpi-label">Total de Lançamentos</span>
-            <span className="kpi-value">
-              {filteredTransactions.length}
+            <span className="kpi-label">Total Entradas (Sangrias)</span>
+            <span className="kpi-value" style={{ color: 'var(--primary)' }}>
+              R$ {totalDeposits.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+
+        <div className="kpi-card expenses">
+          <div className="kpi-icon-wrapper">
+            <TrendingDown size={20} />
+          </div>
+          <div className="kpi-data">
+            <span className="kpi-label">Total Saídas (Retiradas)</span>
+            <span className="kpi-value" style={{ color: 'var(--danger)' }}>
+              R$ {totalWithdrawals.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', alignItems: 'start' }}>
-        {/* Formulário de Movimentação */}
-        <div className="section-card">
-          <div className="card-header" style={{ marginBottom: '8px' }}>
-            <h3 className="card-title">
-              <Coins size={20} className="text-primary" /> Registrar Movimentação
-            </h3>
+      {/* Gráfico de Evolução do Saldo do Cofre */}
+      <div className="section-card">
+        <div className="card-header">
+          <h3 className="card-title">
+            <TrendingUp size={20} /> Evolução de Saldo do Cofre (Últimos 10 Lançamentos)
+          </h3>
+        </div>
+        {chartData.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '14px', fontStyle: 'italic' }}>
+            Nenhum dado histórico suficiente para gerar gráfico de saldo.
           </div>
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div className="form-group">
-                <label>Tipo de Operação</label>
-                <select
-                  value={type}
-                  onChange={(e) => setType(e.target.value)}
-                >
-                  <option value="deposit">Depositar no Cofre</option>
-                  <option value="withdrawal">Retirar do Cofre</option>
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Valor (R$)</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="0,00"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-              </div>
+        ) : (
+          <div>
+            <div className="chart-container" style={{ height: '180px' }}>
+              {chartData.map((d, index) => {
+                const percentage = Math.min(100, Math.max(5, (d.amount / maxAmount) * 100));
+                return (
+                  <div key={index} className="chart-bar-wrapper">
+                    <div
+                      className="chart-bar-fill"
+                      style={{ height: `${percentage}%`, backgroundColor: 'var(--success)' }}
+                    >
+                      <div className="chart-tooltip">R$ {d.amount.toFixed(2)}</div>
+                    </div>
+                    <span className="chart-label" style={{ fontSize: '10px' }}>{d.label}</span>
+                  </div>
+                );
+              })}
             </div>
-
-            <div className="form-group">
-              <label>Data de Referência</label>
-              <input
-                type="date"
-                required
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-              />
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', textAlign: 'right' }}>
+              *Gráfico gerado em tempo real com base no saldo acumulado das transferências do cofre.
             </div>
+          </div>
+        )}
+      </div>
 
-            <div className="form-group">
-              <label>Descrição / Observações</label>
-              <textarea
-                placeholder="Ex: Sangria do caixa diário por segurança ou Troco da tarde"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                style={{ height: '80px', resize: 'none' }}
-              />
-            </div>
-
-            <button type="submit" className="btn-primary" style={{ width: '100%', padding: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              <Lock size={16} /> Confirmar Lançamento
-            </button>
-          </form>
+      {/* Tabela do Histórico */}
+      <div className="section-card">
+        <div className="card-header" style={{ marginBottom: '8px' }}>
+          <h3 className="card-title">
+            <History size={20} className="text-primary" /> Histórico Completo de Transferências
+          </h3>
         </div>
 
-        {/* Histórico do Cofre */}
-        <div className="section-card" style={{ flex: 1.5 }}>
-          <div className="card-header" style={{ marginBottom: '8px' }}>
-            <h3 className="card-title">
-              <History size={20} className="text-primary" /> Histórico de Movimentações
-            </h3>
+        {filteredTransactions.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '14px' }}>
+            Nenhuma movimentação registrada no cofre da {storeId === 'loja-1' ? 'Loja 1' : 'Loja 2'}.
           </div>
-
-          {filteredTransactions.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '14px' }}>
-              Nenhuma movimentação registrada no cofre da {storeId === 'loja-1' ? 'Loja 1' : 'Loja 2'}.
-            </div>
-          ) : (
-            <div className="table-container" style={{ maxHeight: '420px', overflowY: 'auto' }}>
-              <table className="custom-table">
-                <thead>
-                  <tr>
-                    <th>Data</th>
-                    <th>Operação</th>
-                    <th>Descrição</th>
-                    <th style={{ textAlign: 'right' }}>Valor</th>
-                    <th style={{ textAlign: 'center' }}>Ações</th>
+        ) : (
+          <div className="table-container" style={{ maxHeight: '450px', overflowY: 'auto' }}>
+            <table className="custom-table">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Operação</th>
+                  <th>Descrição</th>
+                  <th style={{ textAlign: 'right' }}>Valor</th>
+                  <th style={{ textAlign: 'center' }}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTransactions.map((vt) => (
+                  <tr key={vt.id}>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {new Date(vt.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {vt.type === 'deposit' ? (
+                        <span className="badge badge-success" style={{ fontWeight: 'bold' }}>
+                          Depósito (Entrada)
+                        </span>
+                      ) : (
+                        <span className="badge badge-danger" style={{ fontWeight: 'bold' }}>
+                          Retirada (Saída)
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={vt.description}>
+                      {vt.description}
+                    </td>
+                    <td style={{ textAlign: 'right', fontWeight: 'bold', color: vt.type === 'deposit' ? 'var(--success)' : 'var(--danger)' }}>
+                      {vt.type === 'deposit' ? '+' : '-'} R$ {vt.amount.toFixed(2)}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        onClick={() => onDeleteVaultTransaction(vt.id)}
+                        style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '4px' }}
+                        title="Excluir lançamento"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredTransactions.map((vt) => (
-                    <tr key={vt.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {new Date(vt.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {vt.type === 'deposit' ? (
-                          <span className="badge badge-success" style={{ fontWeight: 'bold' }}>
-                            Depósito (Entrada)
-                          </span>
-                        ) : (
-                          <span className="badge badge-danger" style={{ fontWeight: 'bold' }}>
-                            Retirada (Saída)
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={vt.description}>
-                        {vt.description}
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold', color: vt.type === 'deposit' ? 'var(--success)' : 'var(--danger)' }}>
-                        {vt.type === 'deposit' ? '+' : '-'} R$ {vt.amount.toFixed(2)}
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <button
-                          onClick={() => onDeleteVaultTransaction(vt.id)}
-                          style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '4px' }}
-                          title="Excluir lançamento"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -5933,6 +5929,7 @@ function InvoiceModal({ sale, onClose }) {
 // ==========================================
 function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], onClose, onSave }) {
   const [actualCash, setActualCash] = useState('');
+  const [sangria, setSangria] = useState('');
   const [observations, setObservations] = useState('');
 
   // Filtrar vendas, despesas e transações do cofre do dia específico para a loja logada
@@ -5951,24 +5948,29 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
   const totalVaultDeposits = dayVaultTransactions.filter(vt => vt.type === 'deposit').reduce((acc, vt) => acc + vt.amount, 0);
   const totalVaultWithdrawals = dayVaultTransactions.filter(vt => vt.type === 'withdrawal').reduce((acc, vt) => acc + vt.amount, 0);
 
-  // O "dinheiro em caixa esperado" é: Vendas em Dinheiro - Despesas - Envios para o cofre + Retiradas do cofre para o caixa
-  const expectedCash = totalCashSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
+  // O "dinheiro em caixa esperado" antes de qualquer nova sangria do fechamento
+  const expectedCashBeforeSangria = totalCashSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
 
   const handleSave = () => {
     const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;
-    const diff = cashVal - expectedCash;
+    const sangriaVal = parseFloat(sangria.replace(',', '.')) || 0;
+    const finalExpected = expectedCashBeforeSangria - sangriaVal;
+    const diff = cashVal - finalExpected;
 
     onSave({
       storeId,
       date: dateStr,
-      expectedCash,
+      expectedCash: finalExpected,
       actualCash: cashVal,
       difference: diff,
+      sangriaAmount: sangriaVal,
       observations
     });
   };
 
   const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;
+  const sangriaVal = parseFloat(sangria.replace(',', '.')) || 0;
+  const expectedCash = expectedCashBeforeSangria - sangriaVal;
   const currentDiff = cashVal - expectedCash;
 
   return (
@@ -6014,7 +6016,7 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
         </div>
 
         <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Valor em Dinheiro Físico (R$)</label>
+          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Valor em Dinheiro Físico na Gaveta (R$)</label>
           <input
             type="number"
             step="0.01"
@@ -6022,6 +6024,19 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
             placeholder="0.00"
             value={actualCash}
             onChange={(e) => setActualCash(e.target.value)}
+            style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
+          />
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Sangria (Transferir para o Cofre) (R$)</label>
+          <input
+            type="number"
+            step="0.01"
+            className="form-input"
+            placeholder="0.00"
+            value={sangria}
+            onChange={(e) => setSangria(e.target.value)}
             style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
           />
         </div>
