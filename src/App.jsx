@@ -253,7 +253,7 @@ export default function App() {
     try {
       setLoading(true);
       await clearAllDatabase();
-      
+
       // Limpa os estados do React
       setProducts([]);
       setSales([]);
@@ -261,7 +261,7 @@ export default function App() {
       setCreditAccounts([]);
       setVaultTransactions([]);
       setSyncPendingCount(0);
-      
+
       alert('Tudo limpo! Todo o sistema e a nuvem foram zerados com sucesso.');
     } catch (err) {
       alert('Erro ao resetar o sistema: ' + err.message);
@@ -960,12 +960,12 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <div className="status-badge" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <div 
-                  className="status-dot" 
-                  style={{ 
-                    backgroundColor: syncStatus === 'Sincronizado' 
-                      ? 'var(--success)' 
-                      : (syncStatus === 'Espelhando...' ? 'var(--brand-yellow)' : 'var(--text-muted)') 
+                <div
+                  className="status-dot"
+                  style={{
+                    backgroundColor: syncStatus === 'Sincronizado'
+                      ? 'var(--success)'
+                      : (syncStatus === 'Espelhando...' ? 'var(--brand-yellow)' : 'var(--text-muted)')
                   }}
                 ></div>
                 <span style={{ fontWeight: '600', fontSize: '12px' }}>
@@ -974,7 +974,7 @@ export default function App() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '11px', color: 'var(--text-secondary)' }}>
                 <span>Nuvem: <strong>{syncStatus}</strong></span>
-                <button 
+                <button
                   onClick={executeSync}
                   style={{
                     border: 'none',
@@ -1161,12 +1161,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Status do Código de Barras */}
-            <div className={`scanner-status ${scannerActive ? 'active' : ''}`}>
-              <Barcode size={16} />
-              <span>{scannerActive ? 'Leitor Pronto' : 'Leitor Inativo'}</span>
             </div>
 
             {(activeTab === 'admin-products' || activeTab === 'products') && (
@@ -3751,6 +3745,7 @@ function DailyDashboardView({ sales, expenses, products, onSimulateScan, onChang
                 <table className="custom-table">
                   <thead>
                     <tr>
+                      <th>Horário</th>
                       <th>ID</th>
                       <th>Itens</th>
                       <th>Pagamento</th>
@@ -3760,6 +3755,7 @@ function DailyDashboardView({ sales, expenses, products, onSimulateScan, onChang
                   <tbody>
                     {todaySales.map(sale => (
                       <tr key={sale.id}>
+                        <td>{new Date(sale.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</td>
                         <td style={{ fontWeight: '700' }}>{sale.id}</td>
                         <td>{sale.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}</td>
                         <td>{sale.paymentMethod}</td>
@@ -4224,6 +4220,7 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
               <table className="custom-table">
                 <thead>
                   <tr>
+                    <th>Horário</th>
                     <th>ID</th>
                     <th>Itens</th>
                     <th>Pagamento</th>
@@ -4233,6 +4230,7 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
                 <tbody>
                   {daySales.map(sale => (
                     <tr key={sale.id}>
+                      <td>{new Date(sale.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</td>
                       <td style={{ fontWeight: '700' }}>{sale.id}</td>
                       <td>{sale.items.map(item => `${item.quantity}x ${item.name}`).join(', ')}</td>
                       <td>{sale.paymentMethod}</td>
@@ -5524,82 +5522,83 @@ function VaultView({ vaultTransactions, onSaveVaultTransaction, onDeleteVaultTra
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* Cards de Resumo */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
-        <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '16px', borderLeft: '6px solid var(--success)' }}>
-          <div style={{ padding: '12px', borderRadius: 'var(--radius-md)', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)' }}>
-            <Lock size={32} />
+      <div className="dashboard-summary-grid">
+        <div className="kpi-card profit">
+          <div className="kpi-icon-wrapper">
+            <Lock size={20} />
           </div>
-          <div>
-            <span style={{ fontSize: '14px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Saldo Atual do Cofre</span>
-            <strong style={{ fontSize: '28px', color: 'var(--text-primary)', fontWeight: '800' }}>R$ {balance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+          <div className="kpi-data">
+            <span className="kpi-label">Saldo Atual do Cofre</span>
+            <span className="kpi-value" style={{ color: 'var(--success)' }}>
+              R$ {balance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
           </div>
         </div>
 
-        <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '16px', borderLeft: '6px solid var(--primary)' }}>
-          <div style={{ padding: '12px', borderRadius: 'var(--radius-md)', backgroundColor: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary)' }}>
-            <Coins size={32} />
+        <div className="kpi-card sales">
+          <div className="kpi-icon-wrapper">
+            <Coins size={20} />
           </div>
-          <div>
-            <span style={{ fontSize: '14px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Total de Lançamentos</span>
-            <strong style={{ fontSize: '28px', color: 'var(--text-primary)', fontWeight: '800' }}>{filteredTransactions.length}</strong>
+          <div className="kpi-data">
+            <span className="kpi-label">Total de Lançamentos</span>
+            <span className="kpi-value">
+              {filteredTransactions.length}
+            </span>
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', alignItems: 'start' }}>
         {/* Formulário de Movimentação */}
-        <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
-            <Coins size={20} className="text-primary" /> Registrar Movimentação
-          </h2>
+        <div className="section-card">
+          <div className="card-header" style={{ marginBottom: '8px' }}>
+            <h3 className="card-title">
+              <Coins size={20} className="text-primary" /> Registrar Movimentação
+            </h3>
+          </div>
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Tipo de Operação</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div className="form-group">
+                <label>Tipo de Operação</label>
                 <select
                   value={type}
                   onChange={(e) => setType(e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
                 >
                   <option value="deposit">Depositar no Cofre</option>
                   <option value="withdrawal">Retirar do Cofre</option>
                 </select>
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Valor (R$)</label>
+              <div className="form-group">
+                <label>Valor (R$)</label>
                 <input
                   type="text"
                   required
                   placeholder="0,00"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
                 />
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Data de Referência</label>
-                <input
-                  type="date"
-                  required
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
-                />
-              </div>
+            <div className="form-group">
+              <label>Data de Referência</label>
+              <input
+                type="date"
+                required
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Descrição / Observações</label>
+            <div className="form-group">
+              <label>Descrição / Observações</label>
               <textarea
                 placeholder="Ex: Sangria do caixa diário por segurança ou Troco da tarde"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                style={{ width: '100%', padding: '10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)', height: '80px', resize: 'none' }}
+                style={{ height: '80px', resize: 'none' }}
               />
             </div>
 
@@ -5610,51 +5609,53 @@ function VaultView({ vaultTransactions, onSaveVaultTransaction, onDeleteVaultTra
         </div>
 
         {/* Histórico do Cofre */}
-        <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)', flex: 1.5 }}>
-          <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
-            <History size={20} className="text-primary" /> Histórico de Movimentações
-          </h2>
+        <div className="section-card" style={{ flex: 1.5 }}>
+          <div className="card-header" style={{ marginBottom: '8px' }}>
+            <h3 className="card-title">
+              <History size={20} className="text-primary" /> Histórico de Movimentações
+            </h3>
+          </div>
 
           {filteredTransactions.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '14px' }}>
               Nenhuma movimentação registrada no cofre da {storeId === 'loja-1' ? 'Loja 1' : 'Loja 2'}.
             </div>
           ) : (
-            <div className="table-responsive" style={{ maxHeight: '420px', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <div className="table-container" style={{ maxHeight: '420px', overflowY: 'auto' }}>
+              <table className="custom-table">
                 <thead>
-                  <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left', color: 'var(--text-secondary)' }}>
-                    <th style={{ padding: '12px 8px' }}>Data</th>
-                    <th style={{ padding: '12px 8px' }}>Operação</th>
-                    <th style={{ padding: '12px 8px' }}>Descrição</th>
-                    <th style={{ padding: '12px 8px', textAlign: 'right' }}>Valor</th>
-                    <th style={{ padding: '12px 8px', textAlign: 'center' }}>Ações</th>
+                  <tr>
+                    <th>Data</th>
+                    <th>Operação</th>
+                    <th>Descrição</th>
+                    <th style={{ textAlign: 'right' }}>Valor</th>
+                    <th style={{ textAlign: 'center' }}>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredTransactions.map((vt) => (
-                    <tr key={vt.id} style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>
-                      <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}>
+                    <tr key={vt.id}>
+                      <td style={{ whiteSpace: 'nowrap' }}>
                         {new Date(vt.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
                       </td>
-                      <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}>
+                      <td style={{ whiteSpace: 'nowrap' }}>
                         {vt.type === 'deposit' ? (
-                          <span style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                          <span className="badge badge-success" style={{ fontWeight: 'bold' }}>
                             Depósito (Entrada)
                           </span>
                         ) : (
-                          <span style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                          <span className="badge badge-danger" style={{ fontWeight: 'bold' }}>
                             Retirada (Saída)
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '12px 8px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={vt.description}>
+                      <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={vt.description}>
                         {vt.description}
                       </td>
-                      <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 'bold', color: vt.type === 'deposit' ? 'var(--success)' : 'var(--danger)' }}>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold', color: vt.type === 'deposit' ? 'var(--success)' : 'var(--danger)' }}>
                         {vt.type === 'deposit' ? '+' : '-'} R$ {vt.amount.toFixed(2)}
                       </td>
-                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                      <td style={{ textAlign: 'center' }}>
                         <button
                           onClick={() => onDeleteVaultTransaction(vt.id)}
                           style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '4px' }}
