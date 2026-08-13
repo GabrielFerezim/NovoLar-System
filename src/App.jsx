@@ -120,7 +120,7 @@ export default function App() {
 
     const priorSales = filteredSales.filter(s => {
       const saleDate = new Date(s.timestamp.split('T')[0] + 'T00:00:00');
-      return saleDate < targetDate;
+      return saleDate < targetDate && s.paymentMethod === 'Dinheiro';
     });
 
     const priorExpenses = filteredExpenses.filter(e => {
@@ -128,10 +128,18 @@ export default function App() {
       return expDate < targetDate;
     });
 
+    const priorVault = vaultTransactions.filter(vt => {
+      if (vt.storeId !== storeId) return false;
+      const vtDate = new Date(vt.date + 'T00:00:00');
+      return vtDate < targetDate;
+    });
+
     const totalPriorSales = priorSales.reduce((sum, s) => sum + s.totalPrice, 0);
     const totalPriorExpenses = priorExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const totalPriorVaultDeposits = priorVault.filter(vt => vt.type === 'deposit').reduce((sum, vt) => sum + vt.amount, 0);
+    const totalPriorVaultWithdrawals = priorVault.filter(vt => vt.type === 'withdrawal').reduce((sum, vt) => sum + vt.amount, 0);
 
-    return totalPriorSales - totalPriorExpenses;
+    return totalPriorSales - totalPriorExpenses - totalPriorVaultDeposits + totalPriorVaultWithdrawals;
   };
 
   const handleLogin = (store, role = 'admin') => {
@@ -1273,6 +1281,8 @@ export default function App() {
             <CalendarReportsView
               sales={filteredSales}
               expenses={filteredExpenses}
+              vaultTransactions={vaultTransactions}
+              storeId={storeId}
               getCashBalanceAtDate={getCashBalanceAtDate}
             />
           )}
@@ -3855,7 +3865,7 @@ function DailyDashboardView({ sales, expenses, products, vaultTransactions = [],
 // ==========================================
 // 8. TELA: RELATÓRIOS POR CALENDÁRIO
 // ==========================================
-function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
+function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId, getCashBalanceAtDate }) {
   const [reportMode, setReportMode] = useState('single'); // 'single' | 'range'
   const [startDate, setStartDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
@@ -3875,14 +3885,25 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
       return d >= startDate && d <= endDate;
     });
 
+  const dayVaultTransactions = reportMode === 'single'
+    ? vaultTransactions.filter(vt => vt.storeId === storeId && vt.date === startDate)
+    : vaultTransactions.filter(vt => vt.storeId === storeId && vt.date >= startDate && vt.date <= endDate);
+
   const totalSales = daySales.reduce((sum, s) => sum + s.totalPrice, 0);
   const totalProfit = daySales.reduce((sum, s) => sum + s.profit, 0);
   const totalExpenses = dayExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const netCash = totalSales - totalExpenses;
 
-  // Calculando saldos de abertura e fechamento
+  const totalVaultDeposits = dayVaultTransactions.filter(vt => vt.type === 'deposit').reduce((sum, vt) => sum + vt.amount, 0);
+  const totalVaultWithdrawals = dayVaultTransactions.filter(vt => vt.type === 'withdrawal').reduce((sum, vt) => sum + vt.amount, 0);
+
+  const totalCashSales = daySales.filter(s => s.paymentMethod === 'Dinheiro').reduce((sum, s) => sum + s.totalPrice, 0);
+
+  const netCash = totalSales - totalExpenses;
+  const drawerChange = totalCashSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
+
+  // Calculando saldos de abertura e fechamento da gaveta
   const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(startDate) : 0;
-  const closingCash = openingCash + totalSales - totalExpenses;
+  const closingCash = openingCash + drawerChange;
 
   // Detalhamento de formas de pagamento
   const pixAmount = daySales
@@ -4158,6 +4179,21 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
             </strong>
           </div>
 
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
+            <div style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+              <div style={{ fontSize: '9px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Sangria para Cofre</div>
+              <strong style={{ fontSize: '13px', color: 'var(--success)', marginTop: '2px', display: 'block' }}>
+                R$ {totalVaultDeposits.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </strong>
+            </div>
+            <div style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+              <div style={{ fontSize: '9px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Retirado do Cofre</div>
+              <strong style={{ fontSize: '13px', color: 'var(--danger)', marginTop: '2px', display: 'block' }}>
+                R$ {totalVaultWithdrawals.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </strong>
+            </div>
+          </div>
+
           {/* Caixa de Abertura e Fechamento no Relatório Diário */}
           <div style={{
             display: 'grid',
@@ -4286,6 +4322,46 @@ function CalendarReportsView({ sales, expenses, getCashBalanceAtDate }) {
                       <td>{exp.category}</td>
                       <td>{exp.description}</td>
                       <td style={{ fontWeight: '700', color: 'var(--danger)' }}>R$ {exp.amount.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        <div className="section-card">
+          <div className="card-header">
+            <h3 className="card-title">Movimentações do Cofre ({dayVaultTransactions.length})</h3>
+          </div>
+          <div className="table-container" style={{ maxHeight: '180px', overflowY: 'auto' }}>
+            {dayVaultTransactions.length === 0 ? (
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '14px' }}>Nenhuma movimentação de cofre registrada nesta data.</p>
+            ) : (
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Horário</th>
+                    <th>Operação</th>
+                    <th>Descrição</th>
+                    <th style={{ textAlign: 'right' }}>Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayVaultTransactions.map(vt => (
+                    <tr key={vt.id}>
+                      <td>{new Date(vt.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td>
+                        {vt.type === 'deposit' ? (
+                          <span className="badge badge-success">Sangria (Entrada)</span>
+                        ) : (
+                          <span className="badge badge-danger">Retirada (Saída)</span>
+                        )}
+                      </td>
+                      <td>{vt.description}</td>
+                      <td style={{ textAlign: 'right', fontWeight: '700', color: vt.type === 'deposit' ? 'var(--success)' : 'var(--danger)' }}>
+                        {vt.type === 'deposit' ? '+' : '-'} R$ {vt.amount.toFixed(2)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
