@@ -28,7 +28,8 @@ const initialMockData = {
   expenses: [],
   closures: [],
   syncQueue: [],
-  creditAccounts: []
+  creditAccounts: [],
+  vaultTransactions: []
 };
 
 // --- INICIALIZAÇÃO DE TABELAS NO NEONDB ---
@@ -98,6 +99,18 @@ export async function initializeNeonTables() {
         history TEXT
       )
     `;
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS vault_transactions (
+        id TEXT PRIMARY KEY,
+        timestamp TIMESTAMP,
+        type TEXT,
+        amount NUMERIC,
+        description TEXT,
+        store_id TEXT,
+        date TEXT
+      )
+    `;
   } catch (err) {
     console.error("Falha ao inicializar tabelas no NeonDB:", err.message);
   }
@@ -107,12 +120,13 @@ export async function initializeNeonTables() {
 export async function loadDB() {
   if (isElectron()) {
     try {
-      const [productsRes, salesRes, expensesRes, closuresRes, accountsRes] = await Promise.all([
+      const [productsRes, salesRes, expensesRes, closuresRes, accountsRes, vaultRes] = await Promise.all([
         window.electronAPI.dbAll('SELECT * FROM products ORDER BY name ASC'),
         window.electronAPI.dbAll('SELECT * FROM sales ORDER BY timestamp DESC'),
         window.electronAPI.dbAll('SELECT * FROM expenses ORDER BY timestamp DESC'),
         window.electronAPI.dbAll('SELECT * FROM closures'),
-        window.electronAPI.dbAll('SELECT * FROM credit_accounts')
+        window.electronAPI.dbAll('SELECT * FROM credit_accounts'),
+        window.electronAPI.dbAll('SELECT * FROM vault_transactions ORDER BY timestamp DESC')
       ]);
 
       const products = (productsRes.success ? productsRes.data : []) || [];
@@ -120,6 +134,7 @@ export async function loadDB() {
       const expenses = (expensesRes.success ? expensesRes.data : []) || [];
       const closures = (closuresRes.success ? closuresRes.data : []) || [];
       const creditAccounts = (accountsRes.success ? accountsRes.data : []) || [];
+      const vaultTransactions = (vaultRes.success ? vaultRes.data : []) || [];
 
       const parsedSales = sales.map(s => ({
         ...s,
@@ -147,6 +162,11 @@ export async function loadDB() {
         minStock: parseInt(p.minStock) || 0
       }));
 
+      const parsedVault = vaultTransactions.map(vt => ({
+        ...vt,
+        amount: parseFloat(vt.amount) || 0
+      }));
+
       return {
         products: formattedProducts,
         sales: parsedSales,
@@ -158,7 +178,8 @@ export async function loadDB() {
           difference: parseFloat(c.difference) || 0
         })),
         syncQueue: [],
-        creditAccounts: parsedAccounts
+        creditAccounts: parsedAccounts,
+        vaultTransactions: parsedVault
       };
     } catch (e) {
       console.error("Falha ao ler tabelas SQLite nativas", e);
@@ -167,12 +188,13 @@ export async function loadDB() {
     // Modo Navegador/Vercel: lê direto do NeonDB
     try {
       await initializeNeonTables();
-      const [productsRes, salesRes, expensesRes, closuresRes, accountsRes] = await Promise.all([
+      const [productsRes, salesRes, expensesRes, closuresRes, accountsRes, vaultRes] = await Promise.all([
         sql`SELECT * FROM products ORDER BY name ASC`,
         sql`SELECT * FROM sales ORDER BY timestamp DESC`,
         sql`SELECT * FROM expenses ORDER BY timestamp DESC`,
         sql`SELECT * FROM closures`,
-        sql`SELECT * FROM credit_accounts`
+        sql`SELECT * FROM credit_accounts`,
+        sql`SELECT * FROM vault_transactions ORDER BY timestamp DESC`
       ]);
 
       const parsedSales = (salesRes || []).map(s => ({
@@ -212,6 +234,16 @@ export async function loadDB() {
         unit: p.unit
       }));
 
+      const parsedVault = (vaultRes || []).map(vt => ({
+        id: vt.id,
+        timestamp: formatTimestamp(vt.timestamp),
+        type: vt.type,
+        amount: parseFloat(vt.amount) || 0,
+        description: vt.description,
+        storeId: vt.store_id || 'loja-1',
+        date: vt.date
+      }));
+
       return {
         products: formattedProducts,
         sales: parsedSales,
@@ -235,7 +267,8 @@ export async function loadDB() {
           observations: c.observations
         })),
         syncQueue: [],
-        creditAccounts: parsedAccounts
+        creditAccounts: parsedAccounts,
+        vaultTransactions: parsedVault
       };
     } catch (e) {
       console.warn("Falha ao ler dados do NeonDB no navegador, usando LocalStorage como fallback", e);
@@ -263,6 +296,7 @@ export async function saveDB(data) {
       await window.electronAPI.dbRun('DELETE FROM expenses');
       await window.electronAPI.dbRun('DELETE FROM closures');
       await window.electronAPI.dbRun('DELETE FROM credit_accounts');
+      await window.electronAPI.dbRun('DELETE FROM vault_transactions');
 
       if (data.products) {
         for (const p of data.products) {
@@ -310,6 +344,16 @@ export async function saveDB(data) {
             `INSERT INTO credit_accounts (id, name, address, phone, balance, history)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [ca.id, ca.name, ca.address, ca.phone, ca.balance, JSON.stringify(ca.history)]
+          );
+        }
+      }
+
+      if (data.vaultTransactions) {
+        for (const vt of data.vaultTransactions) {
+          await window.electronAPI.dbRun(
+            `INSERT INTO vault_transactions (id, timestamp, type, amount, description, storeId, date)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [vt.id, vt.timestamp, vt.type, vt.amount, vt.description, vt.storeId, vt.date]
           );
         }
       }
@@ -836,6 +880,7 @@ export async function clearAllDatabase() {
     await window.electronAPI.dbRun('DELETE FROM expenses');
     await window.electronAPI.dbRun('DELETE FROM closures');
     await window.electronAPI.dbRun('DELETE FROM credit_accounts');
+    await window.electronAPI.dbRun('DELETE FROM vault_transactions');
   }
 
   try {
@@ -844,6 +889,7 @@ export async function clearAllDatabase() {
     await sql`DELETE FROM expenses`;
     await sql`DELETE FROM closures`;
     await sql`DELETE FROM credit_accounts`;
+    await sql`DELETE FROM vault_transactions`;
   } catch (e) {
     console.warn("Erro ao limpar nuvem:", e);
   }
@@ -870,12 +916,13 @@ export async function syncAllToCloud() {
     // ========================================================
     // 1. PULL: BAIXAR NOVOS DADOS DA NUVEM PARA O SQLITE LOCAL
     // ========================================================
-    const [cloudProducts, cloudSales, cloudExpenses, cloudClosures, cloudAccounts] = await Promise.all([
+    const [cloudProducts, cloudSales, cloudExpenses, cloudClosures, cloudAccounts, cloudVault] = await Promise.all([
       sql`SELECT * FROM products`,
       sql`SELECT * FROM sales`,
       sql`SELECT * FROM expenses`,
       sql`SELECT * FROM closures`,
-      sql`SELECT * FROM credit_accounts`
+      sql`SELECT * FROM credit_accounts`,
+      sql`SELECT * FROM vault_transactions`
     ]);
 
     // Gravar produtos da nuvem no SQLite local
@@ -969,6 +1016,23 @@ export async function syncAllToCloud() {
       );
     }
 
+    // Gravar transações de cofre da nuvem no SQLite local
+    for (const vt of cloudVault || []) {
+      await window.electronAPI.dbRun(
+        `INSERT OR REPLACE INTO vault_transactions (id, timestamp, type, amount, description, storeId, date)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          vt.id,
+          formatTimestamp(vt.timestamp),
+          vt.type || 'deposit',
+          parseFloat(vt.amount) || 0,
+          vt.description || '',
+          vt.store_id || 'loja-1',
+          vt.date || ''
+        ]
+      );
+    }
+
     // ========================================================
     // 2. PUSH: ENVIAR NOVOS DADOS LOCAIS PARA A NUVEM
     // ========================================================
@@ -1055,6 +1119,21 @@ export async function syncAllToCloud() {
       `;
     }
 
+    // Enviar transações do cofre
+    for (const vt of localDb.vaultTransactions || []) {
+      await sql`
+        INSERT INTO vault_transactions (id, timestamp, type, amount, description, store_id, date)
+        VALUES (${vt.id}, ${vt.timestamp}, ${vt.type}, ${vt.amount}, ${vt.description || ''}, ${vt.storeId}, ${vt.date})
+        ON CONFLICT (id) DO UPDATE SET
+          timestamp = EXCLUDED.timestamp,
+          type = EXCLUDED.type,
+          amount = EXCLUDED.amount,
+          description = EXCLUDED.description,
+          store_id = EXCLUDED.store_id,
+          date = EXCLUDED.date
+      `;
+    }
+
     console.log("✅ Sincronização Bidirecional concluída.");
     return { success: true, data: localDb };
   } catch (err) {
@@ -1078,4 +1157,70 @@ export async function runBackgroundSync() {
     }
   }
   return { status: 'idle', message: 'Navegador não sincroniza em background' };
+}
+
+// ================== GERENCIAMENTO DO COFRE ==================
+
+export async function getVaultTransactions() {
+  const db = await loadDB();
+  return db.vaultTransactions || [];
+}
+
+export async function saveVaultTransaction(vt) {
+  const vtId = vt.id ? String(vt.id) : Date.now().toString();
+  const timestamp = vt.timestamp || new Date().toISOString();
+  const amount = parseFloat(vt.amount) || 0;
+  const storeId = vt.storeId || getStoreId();
+  const date = vt.date || new Date().toISOString().split('T')[0];
+
+  if (isElectron()) {
+    await window.electronAPI.dbRun(
+      `INSERT OR REPLACE INTO vault_transactions (id, timestamp, type, amount, description, storeId, date)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [vtId, timestamp, vt.type, amount, vt.description || '', storeId, date]
+    );
+    syncAllToCloud().catch(err => console.warn("Falha ao espelhar transação de cofre:", err));
+    return getVaultTransactions();
+  }
+
+  // Web
+  try {
+    await initializeNeonTables();
+    await sql`
+      INSERT INTO vault_transactions (id, timestamp, type, amount, description, store_id, date)
+      VALUES (${vtId}, ${timestamp}, ${vt.type}, ${amount}, ${vt.description || ''}, ${storeId}, ${date})
+      ON CONFLICT (id) DO UPDATE SET
+        timestamp = EXCLUDED.timestamp,
+        type = EXCLUDED.type,
+        amount = EXCLUDED.amount,
+        description = EXCLUDED.description,
+        store_id = EXCLUDED.store_id,
+        date = EXCLUDED.date
+    `;
+  } catch (err) {
+    console.error("Erro ao gravar transação de cofre no NeonDB:", err);
+  }
+  return getVaultTransactions();
+}
+
+export async function deleteVaultTransaction(id) {
+  const vtId = String(id);
+  if (isElectron()) {
+    await window.electronAPI.dbRun('DELETE FROM vault_transactions WHERE id = ?', [vtId]);
+    try {
+      await sql`DELETE FROM vault_transactions WHERE id = ${vtId}`;
+    } catch (e) {
+      console.warn("Falha ao deletar transação de cofre remota na exclusão local:", e);
+    }
+    syncAllToCloud().catch(err => console.warn("Falha ao espelhar exclusão de cofre:", err));
+    return getVaultTransactions();
+  }
+
+  // Web
+  try {
+    await sql`DELETE FROM vault_transactions WHERE id = ${vtId}`;
+  } catch (e) {
+    console.error(e);
+  }
+  return getVaultTransactions();
 }

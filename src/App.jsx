@@ -33,7 +33,8 @@ import {
   Bell,
   Users,
   BookOpen,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Lock
 } from 'lucide-react';
 import {
   getProducts,
@@ -56,7 +57,10 @@ import {
   getCreditAccounts,
   saveCreditAccount,
   addCreditTransaction,
-  clearAllDatabase
+  clearAllDatabase,
+  getVaultTransactions,
+  saveVaultTransaction,
+  deleteVaultTransaction
 } from './db';
 import { FiadoCheckoutModal, CreditAccountsView } from './FiadoComponents';
 
@@ -74,6 +78,7 @@ export default function App() {
   const [sales, setSales] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [creditAccounts, setCreditAccounts] = useState([]);
+  const [vaultTransactions, setVaultTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Controle de Sessão de Login
@@ -155,7 +160,8 @@ export default function App() {
         sales: db.sales || [],
         expenses: db.expenses || [],
         closures: db.closures || [],
-        creditAccounts: db.creditAccounts || []
+        creditAccounts: db.creditAccounts || [],
+        vaultTransactions: db.vaultTransactions || []
       };
       const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backupData, null, 2))}`;
       const downloadAnchor = document.createElement('a');
@@ -211,6 +217,7 @@ export default function App() {
           expenses: mergeById(currentDb.expenses || [], parsedData.expenses || []),
           closures: mergeById(currentDb.closures || [], parsedData.closures || []),
           creditAccounts: mergeById(currentDb.creditAccounts || [], parsedData.creditAccounts || []),
+          vaultTransactions: mergeById(currentDb.vaultTransactions || [], parsedData.vaultTransactions || []),
           syncQueue: currentDb.syncQueue || []
         };
 
@@ -219,6 +226,7 @@ export default function App() {
         setSales(updatedDB.sales);
         setExpenses(updatedDB.expenses);
         setCreditAccounts(updatedDB.creditAccounts);
+        setVaultTransactions(updatedDB.vaultTransactions || []);
 
         // Disparar sincronização com Supabase para enviar os novos dados
         await executeSync();
@@ -251,6 +259,7 @@ export default function App() {
       setSales([]);
       setExpenses([]);
       setCreditAccounts([]);
+      setVaultTransactions([]);
       setSyncPendingCount(0);
       
       alert('Tudo limpo! Todo o sistema e a nuvem foram zerados com sucesso.');
@@ -287,6 +296,7 @@ export default function App() {
       setSales(localDb.sales || []);
       setExpenses(localDb.expenses || []);
       setCreditAccounts(localDb.creditAccounts || []);
+      setVaultTransactions(localDb.vaultTransactions || []);
       setSyncPendingCount(0);
 
       const pendings = await getPendingClosures(getStoreId());
@@ -592,6 +602,30 @@ export default function App() {
       } catch (e) {
         console.error(e);
         showScanNotification("Erro ao excluir produto.", "error");
+      }
+    }
+  };
+  // --- CRUD COFRE ---
+  const handleSaveVaultTransaction = async (vtData) => {
+    try {
+      const updatedVault = await saveVaultTransaction(vtData);
+      setVaultTransactions(updatedVault);
+      showScanNotification("Movimentação do cofre registrada!");
+    } catch (e) {
+      console.error(e);
+      showScanNotification("Erro ao registrar no cofre.", "error");
+    }
+  };
+
+  const handleDeleteVaultTransaction = async (vtId) => {
+    if (window.confirm("Tem certeza que deseja excluir esta movimentação do cofre?")) {
+      try {
+        const updatedVault = await deleteVaultTransaction(vtId);
+        setVaultTransactions(updatedVault);
+        showScanNotification("Movimentação do cofre excluída!");
+      } catch (e) {
+        console.error(e);
+        showScanNotification("Erro ao excluir do cofre.", "error");
       }
     }
   };
@@ -908,6 +942,15 @@ export default function App() {
                     Controle de Entregas
                   </button>
                 </li>
+                <li>
+                  <button
+                    className={`submenu-item-btn ${activeTab === 'admin-vault' ? 'active' : ''}`}
+                    onClick={() => { setActiveTab('admin-vault'); setIsMobileMenuOpen(false); }}
+                  >
+                    <Lock size={16} />
+                    Controle do Cofre
+                  </button>
+                </li>
               </ul>
             )}
           </li>
@@ -1031,6 +1074,7 @@ export default function App() {
               {activeTab === 'credit-accounts' && 'Gestão de Contas (Fiados)'}
               {activeTab === 'admin-finance' && 'Administração: Controle Geral & Rede'}
               {activeTab === 'admin-deliveries' && 'Administração: Controle de Entregas'}
+              {activeTab === 'admin-vault' && 'Administração: Controle do Cofre'}
             </h1>
             <span className="header-subtitle">
               {activeTab === 'daily-data' && 'Acompanhamento do faturamento, lucros e despesas de hoje'}
@@ -1041,6 +1085,7 @@ export default function App() {
               {activeTab === 'credit-accounts' && 'Acompanhe as dívidas e pagamentos dos seus clientes de confiança'}
               {activeTab === 'admin-finance' && 'Controle financeiro consolidado de faturamento, lucros, gráficos e rede ao vivo'}
               {activeTab === 'admin-deliveries' && 'Painel de expedição de pedidos para entrega física e geração de Notas Fiscais'}
+              {activeTab === 'admin-vault' && 'Rastreamento de sangrias em dinheiro físico enviadas ou retiradas do cofre seguro'}
             </span>
           </div>
 
@@ -1334,6 +1379,15 @@ export default function App() {
               }}
             />
           )}
+
+          {activeTab === 'admin-vault' && (
+            <VaultView
+              vaultTransactions={vaultTransactions}
+              onSaveVaultTransaction={handleSaveVaultTransaction}
+              onDeleteVaultTransaction={handleDeleteVaultTransaction}
+              storeId={storeId}
+            />
+          )}
         </div>
       </main>
 
@@ -1396,6 +1450,7 @@ export default function App() {
           sales={sales.filter(s => s.paymentMethod !== 'Fiado')}
           expenses={expenses}
           storeId={storeId}
+          vaultTransactions={vaultTransactions}
           onClose={() => { setClosureModalOpen(false); setClosureTargetDate(null); }}
           onSave={handleClosure}
         />
@@ -5432,6 +5487,195 @@ function DeliveriesView({ sales, onUpdateDeliveryStatus, onGenerateInvoice }) {
 }
 
 // ==========================================
+// 8. COMPONENTE: CONTROLE DO COFRE (VAULT)
+// ==========================================
+function VaultView({ vaultTransactions, onSaveVaultTransaction, onDeleteVaultTransaction, storeId }) {
+  const [amount, setAmount] = useState('');
+  const [type, setType] = useState('deposit'); // 'deposit' | 'withdrawal'
+  const [description, setDescription] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const filteredTransactions = vaultTransactions.filter(vt => vt.storeId === storeId);
+
+  const balance = filteredTransactions.reduce((acc, vt) => {
+    if (vt.type === 'deposit') return acc + vt.amount;
+    if (vt.type === 'withdrawal') return acc - vt.amount;
+    return acc;
+  }, 0);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const parsedAmount = parseFloat(amount.replace(',', '.')) || 0;
+    if (parsedAmount <= 0) {
+      alert("Por favor, digite um valor maior que zero.");
+      return;
+    }
+
+    onSaveVaultTransaction({
+      type,
+      amount: parsedAmount,
+      description: description.trim() || (type === 'deposit' ? "Retirada de caixa para cofre" : "Reforço de troco no caixa"),
+      date,
+      storeId
+    });
+
+    setAmount('');
+    setDescription('');
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Cards de Resumo */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+        <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '16px', borderLeft: '6px solid var(--success)' }}>
+          <div style={{ padding: '12px', borderRadius: 'var(--radius-md)', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)' }}>
+            <Lock size={32} />
+          </div>
+          <div>
+            <span style={{ fontSize: '14px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Saldo Atual do Cofre</span>
+            <strong style={{ fontSize: '28px', color: 'var(--text-primary)', fontWeight: '800' }}>R$ {balance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+          </div>
+        </div>
+
+        <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '16px', borderLeft: '6px solid var(--primary)' }}>
+          <div style={{ padding: '12px', borderRadius: 'var(--radius-md)', backgroundColor: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary)' }}>
+            <Coins size={32} />
+          </div>
+          <div>
+            <span style={{ fontSize: '14px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Total de Lançamentos</span>
+            <strong style={{ fontSize: '28px', color: 'var(--text-primary)', fontWeight: '800' }}>{filteredTransactions.length}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', alignItems: 'start' }}>
+        {/* Formulário de Movimentação */}
+        <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)' }}>
+          <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
+            <Coins size={20} className="text-primary" /> Registrar Movimentação
+          </h2>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Tipo de Operação</label>
+                <select
+                  value={type}
+                  onChange={(e) => setType(e.target.value)}
+                  style={{ width: '100%', padding: '10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                >
+                  <option value="deposit">Depositar no Cofre</option>
+                  <option value="withdrawal">Retirar do Cofre</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Valor (R$)</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="0,00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  style={{ width: '100%', padding: '10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Data de Referência</label>
+                <input
+                  type="date"
+                  required
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  style={{ width: '100%', padding: '10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Descrição / Observações</label>
+              <textarea
+                placeholder="Ex: Sangria do caixa diário por segurança ou Troco da tarde"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)', height: '80px', resize: 'none' }}
+              />
+            </div>
+
+            <button type="submit" className="btn-primary" style={{ width: '100%', padding: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <Lock size={16} /> Confirmar Lançamento
+            </button>
+          </form>
+        </div>
+
+        {/* Histórico do Cofre */}
+        <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)', flex: 1.5 }}>
+          <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
+            <History size={20} className="text-primary" /> Histórico de Movimentações
+          </h2>
+
+          {filteredTransactions.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+              Nenhuma movimentação registrada no cofre da {storeId === 'loja-1' ? 'Loja 1' : 'Loja 2'}.
+            </div>
+          ) : (
+            <div className="table-responsive" style={{ maxHeight: '420px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left', color: 'var(--text-secondary)' }}>
+                    <th style={{ padding: '12px 8px' }}>Data</th>
+                    <th style={{ padding: '12px 8px' }}>Operação</th>
+                    <th style={{ padding: '12px 8px' }}>Descrição</th>
+                    <th style={{ padding: '12px 8px', textAlign: 'right' }}>Valor</th>
+                    <th style={{ padding: '12px 8px', textAlign: 'center' }}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTransactions.map((vt) => (
+                    <tr key={vt.id} style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>
+                      <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}>
+                        {new Date(vt.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}>
+                        {vt.type === 'deposit' ? (
+                          <span style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                            Depósito (Entrada)
+                          </span>
+                        ) : (
+                          <span style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                            Retirada (Saída)
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px 8px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={vt.description}>
+                        {vt.description}
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 'bold', color: vt.type === 'deposit' ? 'var(--success)' : 'var(--danger)' }}>
+                        {vt.type === 'deposit' ? '+' : '-'} R$ {vt.amount.toFixed(2)}
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                        <button
+                          onClick={() => onDeleteVaultTransaction(vt.id)}
+                          style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '4px' }}
+                          title="Excluir lançamento"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
 // 7. COMPONENTE: MODAL DE NOTA FISCAL (DANFE SIMPLIFICADA)
 // ==========================================
 function InvoiceModal({ sale, onClose }) {
@@ -5677,14 +5921,15 @@ function InvoiceModal({ sale, onClose }) {
 // ==========================================
 // COMPONENTE: MODAL DE FECHAMENTO DE CAIXA
 // ==========================================
-function ClosureModal({ date, sales, expenses, storeId, onClose, onSave }) {
+function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], onClose, onSave }) {
   const [actualCash, setActualCash] = useState('');
   const [observations, setObservations] = useState('');
 
-  // Filtrar vendas e despesas do dia específico para a loja logada
+  // Filtrar vendas, despesas e transações do cofre do dia específico para a loja logada
   const dateStr = date; // YYYY-MM-DD
   const daySales = sales.filter(s => s.storeId === storeId && s.timestamp.startsWith(dateStr));
   const dayExpenses = expenses.filter(e => e.storeId === storeId && e.timestamp.startsWith(dateStr));
+  const dayVaultTransactions = vaultTransactions.filter(vt => vt.storeId === storeId && vt.date === dateStr);
 
   const totalSales = daySales.reduce((acc, s) => acc + s.totalPrice, 0);
   const totalCashSales = daySales.filter(s => s.paymentMethod === 'Dinheiro').reduce((acc, s) => acc + s.totalPrice, 0);
@@ -5693,9 +5938,11 @@ function ClosureModal({ date, sales, expenses, storeId, onClose, onSave }) {
 
   const totalExpenses = dayExpenses.reduce((acc, e) => acc + e.amount, 0);
 
-  // O "dinheiro em caixa esperado" normalmente é: Vendas em Dinheiro - Despesas pagas no dia
-  // Assumindo que despesas saem do caixa de dinheiro físico:
-  const expectedCash = totalCashSales - totalExpenses;
+  const totalVaultDeposits = dayVaultTransactions.filter(vt => vt.type === 'deposit').reduce((acc, vt) => acc + vt.amount, 0);
+  const totalVaultWithdrawals = dayVaultTransactions.filter(vt => vt.type === 'withdrawal').reduce((acc, vt) => acc + vt.amount, 0);
+
+  // O "dinheiro em caixa esperado" é: Vendas em Dinheiro - Despesas - Envios para o cofre + Retiradas do cofre para o caixa
+  const expectedCash = totalCashSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
 
   const handleSave = () => {
     const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;

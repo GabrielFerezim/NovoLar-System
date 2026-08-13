@@ -94,6 +94,18 @@ function createTables() {
         history TEXT
       )
     `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS vault_transactions (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT,
+        type TEXT,
+        amount REAL,
+        description TEXT,
+        storeId TEXT,
+        date TEXT
+      )
+    `);
   });
 }
 
