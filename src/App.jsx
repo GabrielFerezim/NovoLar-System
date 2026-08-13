@@ -811,7 +811,9 @@ export default function App() {
   const totalSalesValue = filteredSales.reduce((sum, s) => sum + s.totalPrice, 0);
   const totalProfitValue = filteredSales.reduce((sum, s) => sum + s.profit, 0);
   const totalExpensesValue = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const netCash = totalSalesValue - totalExpensesValue;
+  const totalVaultDeposits = vaultTransactions.filter(vt => vt.storeId === storeId && vt.type === 'deposit').reduce((sum, vt) => sum + vt.amount, 0);
+  const totalVaultWithdrawals = vaultTransactions.filter(vt => vt.storeId === storeId && vt.type === 'withdrawal').reduce((sum, vt) => sum + vt.amount, 0);
+  const netCash = totalSalesValue - totalExpensesValue - totalVaultDeposits + totalVaultWithdrawals;
   const lowStockCount = products.filter(p => getProductStock(p) <= p.minStock).length;
 
   const handleClosure = async (closureData) => {
@@ -1224,6 +1226,8 @@ export default function App() {
               sales={filteredSales}
               expenses={filteredExpenses}
               products={products}
+              vaultTransactions={vaultTransactions}
+              storeId={storeId}
               onSimulateScan={triggerSimulatedScan}
               onChangeTab={setActiveTab}
               getCashBalanceAtDate={getCashBalanceAtDate}
@@ -3620,20 +3624,25 @@ function LoginView({ onLogin }) {
 // ==========================================
 // 7. TELA: DADOS DIÁRIOS (HOJE)
 // ==========================================
-function DailyDashboardView({ sales, expenses, products, onSimulateScan, onChangeTab, getCashBalanceAtDate }) {
+function DailyDashboardView({ sales, expenses, products, vaultTransactions = [], storeId, onSimulateScan, onChangeTab, getCashBalanceAtDate }) {
   const todayStr = new Date().toISOString().split('T')[0];
 
   const todaySales = sales.filter(s => s.timestamp.split('T')[0] === todayStr);
   const todayExpenses = expenses.filter(e => e.timestamp.split('T')[0] === todayStr);
+  const todayVaultTransactions = vaultTransactions.filter(vt => vt.storeId === storeId && vt.date === todayStr);
 
   const totalSales = todaySales.reduce((sum, s) => sum + s.totalPrice, 0);
   const totalProfit = todaySales.reduce((sum, s) => sum + s.profit, 0);
   const totalExpenses = todayExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const netCash = totalSales - totalExpenses;
+
+  const totalVaultDeposits = todayVaultTransactions.filter(vt => vt.type === 'deposit').reduce((sum, vt) => sum + vt.amount, 0);
+  const totalVaultWithdrawals = todayVaultTransactions.filter(vt => vt.type === 'withdrawal').reduce((sum, vt) => sum + vt.amount, 0);
+
+  const netCash = totalSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
 
   // Calculando saldos de abertura e fechamento
   const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(todayStr) : 0;
-  const closingCash = openingCash + totalSales - totalExpenses;
+  const closingCash = openingCash + totalSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
 
   const lowStockItems = products.filter(p => getProductStock(p) <= p.minStock);
 
