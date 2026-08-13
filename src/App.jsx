@@ -5821,24 +5821,22 @@ function VaultView({ vaultTransactions, onSaveVaultTransaction, onDeleteVaultTra
                 <input
                   type="number"
                   step="0.01"
-                  className="form-input"
                   required
                   placeholder="0.00"
                   value={withdrawalAmount}
                   onChange={(e) => setWithdrawalAmount(e.target.value)}
-                  style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
+                  style={{ width: '100%' }}
                 />
               </div>
 
               <div className="form-group" style={{ marginBottom: '24px' }}>
                 <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Motivo / Descrição</label>
                 <textarea
-                  className="form-input"
                   rows="2"
                   placeholder="Ex: Retirada de segurança para depósito em conta ou pagamentos"
                   value={withdrawalDesc}
                   onChange={(e) => setWithdrawalDesc(e.target.value)}
-                  style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff', resize: 'vertical' }}
+                  style={{ width: '100%', resize: 'vertical' }}
                 ></textarea>
               </div>
 
@@ -6200,11 +6198,10 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
           <input
             type="number"
             step="0.01"
-            className="form-input"
             placeholder="0.00"
             value={actualCash}
             onChange={(e) => setActualCash(e.target.value)}
-            style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
+            style={{ width: '100%' }}
           />
         </div>
 
@@ -6213,20 +6210,19 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
           <input
             type="number"
             step="0.01"
-            className="form-input"
             placeholder="0.00"
             value={sangria}
             onChange={(e) => setSangria(e.target.value)}
-            style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
+            style={{ width: '100%' }}
           />
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
             Máximo disponível para sangria: <strong>R$ {Math.max(0, expectedCashBeforeSangria).toFixed(2)}</strong>
           </span>
         </div>
 
         <div className="form-group" style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Diferença</label>
-          <div style={{ padding: '10px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', color: currentDiff === 0 ? 'var(--text-secondary)' : (currentDiff < 0 ? 'var(--danger)' : 'var(--success)'), fontWeight: '700' }}>
+          <div style={{ padding: '10px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', color: currentDiff === 0 ? 'var(--text-secondary)' : (currentDiff < 0 ? 'var(--danger)' : 'var(--success)'), fontWeight: '700' }}>
             R$ {currentDiff.toFixed(2)} {currentDiff < 0 ? '(Falta)' : (currentDiff > 0 ? '(Sobra)' : '(Exato)')}
           </div>
         </div>
@@ -6234,11 +6230,10 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
         <div className="form-group" style={{ marginBottom: '24px' }}>
           <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Observações (Opcional)</label>
           <textarea
-            className="form-input"
             rows="2"
             value={observations}
             onChange={(e) => setObservations(e.target.value)}
-            style={{ width: '100%', padding: '10px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff', resize: 'vertical' }}
+            style={{ width: '100%', resize: 'vertical' }}
           ></textarea>
         </div>
 
