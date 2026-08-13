@@ -72,9 +72,16 @@ export async function initializeNeonTables() {
         description TEXT,
         amount NUMERIC,
         category TEXT,
-        store_id TEXT
+        store_id TEXT,
+        source TEXT DEFAULT 'Caixa Físico'
       )
     `;
+
+    try {
+      await sql`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'Caixa Físico'`;
+    } catch (e) {
+      console.warn("Falha ao adicionar coluna source na nuvem:", e);
+    }
 
     await sql`
       CREATE TABLE IF NOT EXISTS closures (
@@ -170,7 +177,7 @@ export async function loadDB() {
       return {
         products: formattedProducts,
         sales: parsedSales,
-        expenses: expenses.map(e => ({ ...e, amount: parseFloat(e.amount) || 0, synced: true })),
+        expenses: expenses.map(e => ({ ...e, amount: parseFloat(e.amount) || 0, source: e.source || 'Caixa Físico', synced: true })),
         closures: closures.map(c => ({
           ...c,
           expectedCash: parseFloat(c.expectedCash) || 0,
@@ -254,6 +261,7 @@ export async function loadDB() {
           amount: parseFloat(e.amount) || 0,
           category: e.category,
           storeId: e.store_id || 'loja-1',
+          source: e.source || 'Caixa Físico',
           synced: true
         })),
         closures: (closuresRes || []).map(c => ({
@@ -655,12 +663,13 @@ export async function saveExpense(expense) {
   const timestamp = expense.timestamp || new Date().toISOString();
   const amount = parseFloat(expense.amount) || 0;
   const storeId = expense.storeId || getStoreId();
+  const source = expense.source || 'Caixa Físico';
 
   if (isElectron()) {
     await window.electronAPI.dbRun(
-      `INSERT OR REPLACE INTO expenses (id, timestamp, description, amount, category, storeId)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [expId, timestamp, expense.description, amount, expense.category, storeId]
+      `INSERT OR REPLACE INTO expenses (id, timestamp, description, amount, category, storeId, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [expId, timestamp, expense.description, amount, expense.category, storeId, source]
     );
     syncAllToCloud().catch(err => console.warn("Falha ao espelhar despesa:", err));
     return getExpenses();
@@ -669,14 +678,15 @@ export async function saveExpense(expense) {
   // Web
   try {
     await sql`
-      INSERT INTO expenses (id, timestamp, description, amount, category, store_id)
-      VALUES (${expId}, ${timestamp}, ${expense.description}, ${amount}, ${expense.category}, ${storeId})
+      INSERT INTO expenses (id, timestamp, description, amount, category, store_id, source)
+      VALUES (${expId}, ${timestamp}, ${expense.description}, ${amount}, ${expense.category}, ${storeId}, ${source})
       ON CONFLICT (id) DO UPDATE SET
         timestamp = EXCLUDED.timestamp,
         description = EXCLUDED.description,
         amount = EXCLUDED.amount,
         category = EXCLUDED.category,
-        store_id = EXCLUDED.store_id
+        store_id = EXCLUDED.store_id,
+        source = EXCLUDED.source
     `;
   } catch (e) {
     console.error(e);
@@ -1099,14 +1109,15 @@ export async function syncAllToCloud() {
     // Enviar despesas
     for (const e of localDb.expenses || []) {
       await sql`
-        INSERT INTO expenses (id, timestamp, description, amount, category, store_id)
-        VALUES (${e.id}, ${e.timestamp}, ${e.description}, ${e.amount}, ${e.category}, ${e.storeId})
+        INSERT INTO expenses (id, timestamp, description, amount, category, store_id, source)
+        VALUES (${e.id}, ${e.timestamp}, ${e.description}, ${e.amount}, ${e.category}, ${e.storeId}, ${e.source || 'Caixa Físico'})
         ON CONFLICT (id) DO UPDATE SET
           timestamp = EXCLUDED.timestamp,
           description = EXCLUDED.description,
           amount = EXCLUDED.amount,
           category = EXCLUDED.category,
-          store_id = EXCLUDED.store_id
+          store_id = EXCLUDED.store_id,
+          source = EXCLUDED.source
       `;
     }
 

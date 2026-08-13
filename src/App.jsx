@@ -125,7 +125,7 @@ export default function App() {
 
     const priorExpenses = filteredExpenses.filter(e => {
       const expDate = new Date(e.timestamp.split('T')[0] + 'T00:00:00');
-      return expDate < targetDate;
+      return expDate < targetDate && (e.source === 'Caixa Físico' || !e.source);
     });
 
     const priorVault = vaultTransactions.filter(vt => {
@@ -674,6 +674,17 @@ export default function App() {
     try {
       const updatedExpenses = await saveExpense(expenseData);
       setExpenses(updatedExpenses);
+
+      if (expenseData.source === 'Cofre') {
+        await handleSaveVaultTransaction({
+          type: 'withdrawal',
+          amount: expenseData.amount,
+          description: `Despesa via Cofre: ${expenseData.description}`,
+          date: expenseData.timestamp ? expenseData.timestamp.split('T')[0] : new Date().toISOString().split('T')[0],
+          storeId: storeId
+        });
+      }
+
       setExpenseModalOpen(false);
       showScanNotification("Despesa registrada com sucesso!");
     } catch (e) {
@@ -822,7 +833,10 @@ export default function App() {
   const totalExpensesValue = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
   const totalVaultDeposits = vaultTransactions.filter(vt => vt.storeId === storeId && vt.type === 'deposit').reduce((sum, vt) => sum + vt.amount, 0);
   const totalVaultWithdrawals = vaultTransactions.filter(vt => vt.storeId === storeId && vt.type === 'withdrawal').reduce((sum, vt) => sum + vt.amount, 0);
-  const netCash = totalSalesValue - totalExpensesValue - totalVaultDeposits + totalVaultWithdrawals;
+  
+  const totalCashSalesValue = filteredSales.filter(s => s.paymentMethod === 'Dinheiro').reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalCashExpensesValue = filteredExpenses.filter(e => e.source === 'Caixa Físico' || !e.source).reduce((sum, e) => sum + e.amount, 0);
+  const netCash = totalCashSalesValue - totalCashExpensesValue - totalVaultDeposits + totalVaultWithdrawals;
   const lowStockCount = products.filter(p => getProductStock(p) <= p.minStock).length;
 
   const handleClosure = async (closureData) => {
@@ -1274,6 +1288,7 @@ export default function App() {
               setDiscount={setDiscount}
               checkoutInstallments={checkoutInstallments}
               setCheckoutInstallments={setCheckoutInstallments}
+              onOpenExpenseModal={() => setExpenseModalOpen(true)}
             />
           )}
 
@@ -2157,7 +2172,8 @@ function PDVView({
   discount,
   setDiscount,
   checkoutInstallments,
-  setCheckoutInstallments
+  setCheckoutInstallments,
+  onOpenExpenseModal
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -2573,23 +2589,45 @@ function PDVView({
       {/* LADO DIREITO: Painel de Checkout / Pagamento */}
       <div className="pdv-right-panel">
         {/* Total do Caixa Badge */}
-        <div style={{
-          backgroundColor: 'var(--primary-glow)',
-          border: '1px solid rgba(18, 121, 138, 0.2)',
-          borderRadius: 'var(--radius-md)',
-          padding: '12px 16px',
-          marginBottom: '16px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Coins size={18} style={{ color: 'var(--primary)' }} />
-            <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-secondary)' }}>Saldo Acumulado do Caixa:</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+          <div style={{
+            backgroundColor: 'var(--primary-glow)',
+            border: '1px solid rgba(18, 121, 138, 0.2)',
+            borderRadius: 'var(--radius-md)',
+            padding: '12px 16px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Coins size={18} style={{ color: 'var(--primary)' }} />
+              <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-secondary)' }}>Saldo Acumulado do Caixa:</span>
+            </div>
+            <strong style={{ fontSize: '16px', color: 'var(--primary)' }}>
+              R$ {currentCashBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </strong>
           </div>
-          <strong style={{ fontSize: '16px', color: 'var(--primary)' }}>
-            R$ {currentCashBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </strong>
+
+          <button
+            onClick={onOpenExpenseModal}
+            className="btn-primary"
+            style={{
+              width: '100%',
+              padding: '10px',
+              fontWeight: '700',
+              backgroundColor: 'var(--danger)',
+              border: 'none',
+              borderRadius: 'var(--radius-md)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              boxShadow: 'var(--shadow-sm)',
+              cursor: 'pointer'
+            }}
+          >
+            <TrendingDown size={16} /> Registrar Despesa / Saída
+          </button>
         </div>
 
         <div className="checkout-header">
@@ -3508,6 +3546,7 @@ function ExpenseModal({ onClose, onSave }) {
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('Contas Fixas');
+  const [source, setSource] = useState('Caixa Físico');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -3519,7 +3558,8 @@ function ExpenseModal({ onClose, onSave }) {
     onSave({
       description: description.trim(),
       amount: parseFloat(amount.replace(',', '.')),
-      category
+      category,
+      source
     });
   };
 
@@ -3541,6 +3581,15 @@ function ExpenseModal({ onClose, onSave }) {
               placeholder="Ex: Conta de Luz Enel Julho"
               required
             />
+          </div>
+
+          <div className="form-group">
+            <label>Origem dos Recursos (De onde sai o dinheiro?)</label>
+            <select value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="Caixa Físico">Caixa Físico (Gaveta do Terminal)</option>
+              <option value="Cofre">Cofre Seguro (Fundo Reserva)</option>
+              <option value="Banco / Pix">Banco / Pix (Conta Digital)</option>
+            </select>
           </div>
 
           <div className="form-row">
@@ -3658,11 +3707,14 @@ function DailyDashboardView({ sales, expenses, products, vaultTransactions = [],
   const totalVaultDeposits = todayVaultTransactions.filter(vt => vt.type === 'deposit').reduce((sum, vt) => sum + vt.amount, 0);
   const totalVaultWithdrawals = todayVaultTransactions.filter(vt => vt.type === 'withdrawal').reduce((sum, vt) => sum + vt.amount, 0);
 
-  const netCash = totalSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
+  const totalCashSales = todaySales.filter(s => s.paymentMethod === 'Dinheiro').reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalCashExpenses = todayExpenses.filter(e => e.source === 'Caixa Físico' || !e.source).reduce((sum, e) => sum + e.amount, 0);
+
+  const netCash = totalCashSales - totalCashExpenses - totalVaultDeposits + totalVaultWithdrawals;
 
   // Calculando saldos de abertura e fechamento
   const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(todayStr) : 0;
-  const closingCash = openingCash + totalSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
+  const closingCash = openingCash + netCash;
 
   const lowStockItems = products.filter(p => getProductStock(p) <= p.minStock);
 
@@ -3897,9 +3949,10 @@ function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId,
   const totalVaultWithdrawals = dayVaultTransactions.filter(vt => vt.type === 'withdrawal').reduce((sum, vt) => sum + vt.amount, 0);
 
   const totalCashSales = daySales.filter(s => s.paymentMethod === 'Dinheiro').reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalCashExpenses = dayExpenses.filter(e => e.source === 'Caixa Físico' || !e.source).reduce((sum, e) => sum + e.amount, 0);
 
   const netCash = totalSales - totalExpenses;
-  const drawerChange = totalCashSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
+  const drawerChange = totalCashSales - totalCashExpenses - totalVaultDeposits + totalVaultWithdrawals;
 
   // Calculando saldos de abertura e fechamento da gaveta
   const openingCash = getCashBalanceAtDate ? getCashBalanceAtDate(startDate) : 0;
@@ -6191,12 +6244,13 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
   const totalCardSales = daySales.filter(s => s.paymentMethod.includes('Cartão')).reduce((acc, s) => acc + s.totalPrice, 0);
 
   const totalExpenses = dayExpenses.reduce((acc, e) => acc + e.amount, 0);
+  const totalCashExpenses = dayExpenses.filter(e => e.source === 'Caixa Físico' || !e.source).reduce((acc, e) => acc + e.amount, 0);
 
   const totalVaultDeposits = dayVaultTransactions.filter(vt => vt.type === 'deposit').reduce((acc, vt) => acc + vt.amount, 0);
   const totalVaultWithdrawals = dayVaultTransactions.filter(vt => vt.type === 'withdrawal').reduce((acc, vt) => acc + vt.amount, 0);
 
   // O "dinheiro em caixa esperado" antes de qualquer nova sangria do fechamento
-  const expectedCashBeforeSangria = totalCashSales - totalExpenses - totalVaultDeposits + totalVaultWithdrawals;
+  const expectedCashBeforeSangria = totalCashSales - totalCashExpenses - totalVaultDeposits + totalVaultWithdrawals;
 
   const handleSave = () => {
     const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;

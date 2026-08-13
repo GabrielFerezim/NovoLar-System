@@ -67,9 +67,14 @@ function createTables() {
         description TEXT,
         amount REAL,
         category TEXT,
-        storeId TEXT
+        storeId TEXT,
+        source TEXT DEFAULT 'Caixa Físico'
       )
     `);
+
+    db.run("ALTER TABLE expenses ADD COLUMN source TEXT DEFAULT 'Caixa Físico'", (err) => {
+      // Ignorar erro se a coluna já existir
+    });
 
     db.run(`
       CREATE TABLE IF NOT EXISTS closures (
