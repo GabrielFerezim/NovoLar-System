@@ -588,10 +588,31 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
       INSERT INTO sales (id, timestamp, total_price, total_cost, profit, payment_method, store_id, items, delivery_details)
       VALUES (${saleId}, ${timestamp}, ${finalTotalPrice}, ${totalCost}, ${finalTotalPrice - totalCost}, ${paymentMethod}, ${currentStore}, ${JSON.stringify(saleProducts)}, ${deliveryDetails ? JSON.stringify(deliveryDetails) : null})
     `;
+
+    for (const item of saleItems) {
+      const prod = products.find(p => String(p.id) === String(item.id));
+      if (prod) {
+        let stock1 = prod.stockLoja1 ?? prod.stock ?? 0;
+        let stock2 = prod.stockLoja2 ?? 0;
+        if (currentStore === 'loja-2') {
+          stock2 = Math.max(0, stock2 - item.quantity);
+        } else {
+          stock1 = Math.max(0, stock1 - item.quantity);
+        }
+        const totalStock = stock1 + stock2;
+
+        await sql`
+          UPDATE products 
+          SET stock = ${totalStock}
+          WHERE id = ${prod.id}
+        `;
+      }
+    }
   } catch (e) {
     console.error(e);
   }
-  return getSales();
+  const freshDb = await loadDB();
+  return { sales: freshDb.sales, products: freshDb.products };
 }
 
 export async function updateSaleDeliveryStatus(saleId, status, deliveredAt = null) {
