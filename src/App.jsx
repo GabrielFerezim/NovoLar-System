@@ -36,7 +36,11 @@ import {
   BookOpen,
   ArrowRightLeft,
   Lock,
-  PlusCircle
+  PlusCircle,
+  Share2,
+  FileSpreadsheet,
+  ShoppingCart,
+  Copy
 } from 'lucide-react';
 import {
   getProducts,
@@ -58,6 +62,7 @@ import {
   saveClosure,
   getCreditAccounts,
   saveCreditAccount,
+  deleteCreditAccount,
   addCreditTransaction,
   clearAllDatabase,
   getVaultTransactions,
@@ -66,6 +71,10 @@ import {
   getBills,
   saveBill,
   deleteBill,
+  getQuotes,
+  saveQuote,
+  deleteQuote,
+  updateQuoteStatus,
   isElectron
 } from './db';
 import { FiadoCheckoutModal, CreditAccountsView } from './FiadoComponents';
@@ -86,6 +95,10 @@ export default function App() {
   const [creditAccounts, setCreditAccounts] = useState([]);
   const [vaultTransactions, setVaultTransactions] = useState([]);
   const [bills, setBills] = useState([]);
+  const [quotes, setQuotes] = useState([]);
+  const [createQuoteModalOpen, setCreateQuoteModalOpen] = useState(false);
+  const [selectedQuoteToPrint, setSelectedQuoteToPrint] = useState(null);
+  const [activeQuoteId, setActiveQuoteId] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Controle de Sessão de Login
@@ -324,6 +337,7 @@ export default function App() {
       setCreditAccounts(localDb.creditAccounts || []);
       setVaultTransactions(localDb.vaultTransactions || []);
       setBills(localDb.bills || []);
+      setQuotes(localDb.quotes || []);
       setSyncPendingCount(0);
 
       const pendings = await getPendingClosures(getStoreId());
@@ -353,6 +367,7 @@ export default function App() {
           setCreditAccounts(freshDb.creditAccounts || []);
           setVaultTransactions(freshDb.vaultTransactions || []);
           setBills(freshDb.bills || []);
+          setQuotes(freshDb.quotes || []);
           const pendings = await getPendingClosures(getStoreId());
           setPendingClosures(pendings);
         } else {
@@ -368,6 +383,7 @@ export default function App() {
         setCreditAccounts(freshDb.creditAccounts || []);
         setVaultTransactions(freshDb.vaultTransactions || []);
         setBills(freshDb.bills || []);
+        setQuotes(freshDb.quotes || []);
         const pendings = await getPendingClosures(getStoreId());
         setPendingClosures(pendings);
         setSyncStatus('Sincronizado');
@@ -551,6 +567,14 @@ export default function App() {
         deliveryDetails: pendingDeliveryDetails
       });
 
+      if (activeQuoteId) {
+        try {
+          const updatedQuotes = await updateQuoteStatus(activeQuoteId, 'Aprovado');
+          setQuotes(updatedQuotes);
+          setActiveQuoteId(null);
+        } catch (e) {}
+      }
+
       setCart([]);
       setAmountPaid('');
       setDiscount(0);
@@ -609,6 +633,14 @@ export default function App() {
         deliveryDetails
       });
 
+      if (activeQuoteId) {
+        try {
+          const updatedQuotes = await updateQuoteStatus(activeQuoteId, 'Aprovado');
+          setQuotes(updatedQuotes);
+          setActiveQuoteId(null);
+        } catch (e) {}
+      }
+
       setCart([]);
       setAmountPaid('');
       setDiscount(0);
@@ -618,6 +650,22 @@ export default function App() {
       console.error("Erro ao finalizar venda:", error);
       showScanNotification("Erro ao finalizar venda.", "error");
     }
+  };
+
+  const handleLoadQuoteIntoCart = (quote) => {
+    const loadedCart = (quote.items || []).map(i => ({
+      id: i.productId || i.id,
+      code: i.code || '',
+      name: i.name,
+      salePrice: parseFloat(i.salePrice) || 0,
+      costPrice: parseFloat(i.costPrice) || 0,
+      quantity: parseInt(i.quantity) || 1,
+      unit: i.unit || 'Un'
+    }));
+    setCart(loadedCart);
+    setActiveQuoteId(quote.id);
+    setActiveTab('pdv');
+    showScanNotification(`Orçamento #${quote.id} carregado no PDV!`, "success");
   };
 
   // --- CONTROLE DE ENTREGAS ---
@@ -1072,6 +1120,30 @@ export default function App() {
           </li>
           <li>
             <button
+              className={`menu-item-btn ${activeTab === 'quotes' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('quotes'); setIsMobileMenuOpen(false); }}
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <FileSpreadsheet size={20} />
+                <span>Orçamentos</span>
+              </div>
+              {quotes.filter(q => q.status === 'Pendente').length > 0 && (
+                <span style={{
+                  backgroundColor: 'var(--brand-yellow)',
+                  color: '#000',
+                  padding: '1px 7px',
+                  borderRadius: '10px',
+                  fontSize: '11px',
+                  fontWeight: '800'
+                }}>
+                  {quotes.filter(q => q.status === 'Pendente').length}
+                </span>
+              )}
+            </button>
+          </li>
+          <li>
+            <button
               className={`menu-item-btn ${activeTab === 'admin-deliveries' ? 'active' : ''}`}
               onClick={() => { setActiveTab('admin-deliveries'); setIsMobileMenuOpen(false); }}
             >
@@ -1257,6 +1329,7 @@ export default function App() {
               {activeTab === 'daily-data' && 'Dados Diários (Hoje)'}
               {activeTab === 'calendar' && 'Calendário de Relatórios'}
               {activeTab === 'pdv' && 'Frente de Caixa / Checkout'}
+              {activeTab === 'quotes' && 'Orçamentos & Cotações Comerciais'}
               {activeTab === 'admin-insights' && 'Insights Comerciais (IA)'}
               {activeTab === 'admin-products' && 'Administração: Produtos & Estoque'}
               {activeTab === 'credit-accounts' && 'Gestão de Contas (Fiados)'}
@@ -1269,6 +1342,7 @@ export default function App() {
               {activeTab === 'daily-data' && 'Acompanhamento do faturamento, lucros e despesas de hoje'}
               {activeTab === 'calendar' && 'Selecione qualquer data no calendário para extrair relatórios históricos'}
               {activeTab === 'pdv' && 'Adicione produtos bipando ou digitando o código de barras'}
+              {activeTab === 'quotes' && 'Cotações de clientes sem alteração de estoque até o fechamento da venda'}
               {activeTab === 'admin-insights' && 'Análise de vendas, priorização de compras por lucro e diagnóstico de mercado'}
               {activeTab === 'admin-products' && 'Cadastrar, edite e gerencie o estoque mínimo dos produtos'}
               {activeTab === 'credit-accounts' && 'Acompanhe as dívidas e pagamentos dos seus clientes de confiança'}
@@ -1445,6 +1519,7 @@ export default function App() {
               checkoutInstallments={checkoutInstallments}
               setCheckoutInstallments={setCheckoutInstallments}
               onOpenExpenseModal={() => setExpenseModalOpen(true)}
+              onSaveQuote={() => setCreateQuoteModalOpen(true)}
             />
           )}
 
@@ -1456,6 +1531,24 @@ export default function App() {
               storeId={storeId}
               getCashBalanceAtDate={getCashBalanceAtDate}
               bills={bills}
+            />
+          )}
+
+          {activeTab === 'quotes' && (
+            <QuotesView
+              quotes={quotes}
+              onOpenCreateModal={() => setCreateQuoteModalOpen(true)}
+              onLoadQuoteIntoCart={handleLoadQuoteIntoCart}
+              onDeleteQuote={async (id) => {
+                const updated = await deleteQuote(id);
+                setQuotes(updated);
+                showScanNotification("Orçamento excluído.");
+              }}
+              onUpdateQuoteStatus={async (id, status) => {
+                const updated = await updateQuoteStatus(id, status);
+                setQuotes(updated);
+              }}
+              onPrintQuote={(q) => setSelectedQuoteToPrint(q)}
             />
           )}
 
@@ -1473,6 +1566,17 @@ export default function App() {
               onCreateAccount={async (acc) => {
                 const updated = await saveCreditAccount(acc);
                 setCreditAccounts(updated);
+                showScanNotification(`Cliente ${acc.name} cadastrado com sucesso!`, 'success');
+              }}
+              onUpdateAccount={async (acc) => {
+                const updated = await saveCreditAccount(acc);
+                setCreditAccounts(updated);
+                showScanNotification(`Cliente ${acc.name} atualizado com sucesso!`, 'success');
+              }}
+              onDeleteAccount={async (id) => {
+                const updated = await deleteCreditAccount(id);
+                setCreditAccounts(updated);
+                showScanNotification('Conta de fiado excluída com sucesso.', 'success');
               }}
               onAddTransaction={async (accountId, type, amount, description, paymentMethod = 'Dinheiro') => {
                 let saleId = null;
@@ -1724,6 +1828,32 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Modal: Criar Novo Orçamento Interativo */}
+      {createQuoteModalOpen && (
+        <CreateQuoteModal
+          products={products}
+          initialCart={activeTab === 'pdv' ? cart : []}
+          storeId={storeId}
+          onClose={() => setCreateQuoteModalOpen(false)}
+          onSave={async (quoteData) => {
+            const updated = await saveQuote(quoteData);
+            setQuotes(updated);
+            showScanNotification(`Orçamento #${quoteData.id} salvo com sucesso!`, 'success');
+          }}
+          onPrint={(q) => setSelectedQuoteToPrint(q)}
+          onLoadIntoPDV={(q) => handleLoadQuoteIntoCart(q)}
+        />
+      )}
+
+      {/* Modal: Visualização de Impressão do Orçamento */}
+      {selectedQuoteToPrint && (
+        <QuotePrintModal
+          quote={selectedQuoteToPrint}
+          onClose={() => setSelectedQuoteToPrint(null)}
+        />
+      )}
+
     </div>
   );
 }
@@ -2409,7 +2539,8 @@ function PDVView({
   setDiscount,
   checkoutInstallments,
   setCheckoutInstallments,
-  onOpenExpenseModal
+  onOpenExpenseModal,
+  onSaveQuote
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -2536,6 +2667,11 @@ function PDVView({
             onCheckout();
           }
         }
+      } else if (e.key === 'F6') {
+        e.preventDefault();
+        if (cart.length > 0 && onSaveQuote) {
+          onSaveQuote();
+        }
       } else if (e.key === 'F8') {
         e.preventDefault();
         if (cart.length > 0) {
@@ -2547,7 +2683,7 @@ function PDVView({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cart, paymentMethod, onCheckout, onRemoveFromCart]);
+  }, [cart, paymentMethod, onCheckout, onRemoveFromCart, onSaveQuote]);
 
   // Pesquisar produtos manualmente
   useEffect(() => {
@@ -2824,170 +2960,148 @@ function PDVView({
 
       {/* LADO DIREITO: Painel de Checkout / Pagamento */}
       <div className="pdv-right-panel">
-        {/* Total do Caixa Badge */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-          <div style={{
-            backgroundColor: 'var(--primary-glow)',
-            border: '1px solid rgba(18, 121, 138, 0.2)',
-            borderRadius: 'var(--radius-md)',
-            padding: '12px 16px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Coins size={18} style={{ color: 'var(--primary)' }} />
-              <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-secondary)' }}>Saldo Acumulado do Caixa:</span>
-            </div>
-            <strong style={{ fontSize: '16px', color: 'var(--primary)' }}>
-              R$ {currentCashBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </strong>
+        
+        {/* 1. Header Integrado: Título + Badge de Caixa + Botão de Despesa */}
+        <div className="pdv-checkout-top-header">
+          <div className="pdv-checkout-header-title">
+            <span className="pdv-checkout-badge">CHECKOUT</span>
+            <h2>Resumo & Pagamento</h2>
           </div>
 
-          <button
-            onClick={onOpenExpenseModal}
-            className="btn-primary"
-            style={{
-              width: '100%',
-              padding: '10px',
-              fontWeight: '700',
-              backgroundColor: 'var(--danger)',
-              border: 'none',
-              borderRadius: 'var(--radius-md)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              boxShadow: 'var(--shadow-sm)',
-              cursor: 'pointer'
-            }}
-          >
-            <TrendingDown size={16} /> Registrar Despesa / Saída
-          </button>
+          <div className="pdv-caixa-action-pill">
+            <div className="pdv-caixa-info" title="Saldo acumulado em caixa no momento">
+              <Coins size={15} className="pdv-caixa-icon" />
+              <span className="pdv-caixa-val">R$ {currentCashBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenExpenseModal}
+              className="pdv-expense-quick-btn"
+              title="Registrar Despesa / Saída de Caixa"
+            >
+              <TrendingDown size={14} />
+              <span>Saída</span>
+            </button>
+          </div>
         </div>
 
-        <div className="checkout-header">
-          <span style={{ fontSize: '13px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.5px' }}>Checkout</span>
-          <h2 style={{ fontSize: '20px', fontWeight: '700' }}>Resumo & Pagamento</h2>
-        </div>
-
-        <div className="checkout-summary">
-          <div className="checkout-row">
-            <span>Subtotal</span>
-            <span>R$ {totalCart.toFixed(2)}</span>
-          </div>
-          <div className="checkout-row">
-            <span>Desconto</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {discount > 0 && (
-                <button
-                  style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
-                  onClick={() => setDiscount(0)}
-                >
-                  [Remover]
-                </button>
-              )}
-              <span style={{ color: 'var(--success)', fontWeight: '700' }}>
-                {discount > 0 ? `- R$ ${discount.toFixed(2)}` : 'R$ 0,00'}
-              </span>
+        {/* 2. Corpo do Checkout (Subtotal, Desconto, Forma de Pgto, Entrega) */}
+        <div className="pdv-checkout-body">
+          
+          {/* Subtotal & Desconto Box */}
+          <div className="pdv-receipt-card">
+            <div className="pdv-receipt-line">
+              <span className="label">Subtotal</span>
+              <strong className="value">R$ {totalCart.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
             </div>
-          </div>
 
-          {/* Caixa de Sugestão de Desconto */}
-          {totalCart > 0 && discount === 0 && (
-            (() => {
-              let pct = 0;
-              if (totalCart >= 500) pct = 10;
-              else if (totalCart >= 200) pct = 7;
-              else if (totalCart >= 100) pct = 5;
-              else if (totalCart >= 50) pct = 3;
-
-              if (pct === 0) return null;
-
-              const suggestedAmount = parseFloat((totalCart * (pct / 100)).toFixed(2));
-              return (
-                <div style={{
-                  marginTop: '12px',
-                  padding: '12px',
-                  backgroundColor: 'rgba(74, 222, 128, 0.05)',
-                  border: '1px dashed var(--success)',
-                  borderRadius: 'var(--radius-sm)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  animation: 'fadeIn 0.2s ease-out'
-                }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Sugestão de Desconto ({pct}%): <strong style={{ color: 'var(--success)' }}>R$ {suggestedAmount.toFixed(2)}</strong>
-                  </div>
+            <div className="pdv-receipt-line">
+              <span className="label">Desconto</span>
+              <div className="pdv-discount-val-wrap">
+                {discount > 0 && (
                   <button
-                    className="btn-primary"
-                    style={{
-                      padding: '4px 8px',
-                      fontSize: '11px',
-                      width: 'auto',
-                      height: 'auto',
-                      backgroundColor: 'var(--success)',
-                      borderColor: 'var(--success)',
-                      color: '#000',
-                      fontWeight: '700'
-                    }}
-                    onClick={() => setDiscount(suggestedAmount)}
+                    type="button"
+                    className="pdv-clear-discount-btn"
+                    onClick={() => setDiscount(0)}
+                    title="Remover desconto"
                   >
-                    Aplicar
+                    <X size={12} /> Zerar
                   </button>
-                </div>
-              );
-            })()
-          )}
+                )}
+                <strong className={`value ${discount > 0 ? 'has-discount' : ''}`}>
+                  {discount > 0 ? `- R$ ${discount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'R$ 0,00'}
+                </strong>
+              </div>
+            </div>
 
-          <div style={{ marginTop: '16px' }}>
-            <span className="input-label">Forma de Pagamento</span>
-            <div className="payment-grid">
+            {/* Sugestões Rápidas de Desconto (Pills) */}
+            {totalCart > 0 && (
+              <div className="pdv-discount-suggestions">
+                <span className="hint-label">💡 Sugestão à vista:</span>
+                <div className="pdv-discount-pills">
+                  {[3, 5, 10].map(pct => {
+                    const val = parseFloat((totalCart * (pct / 100)).toFixed(2));
+                    const isCurrent = Math.abs(discount - val) < 0.01;
+                    return (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => setDiscount(isCurrent ? 0 : val)}
+                        className={`pdv-discount-pill ${isCurrent ? 'active' : ''}`}
+                        title={`Aplicar ${pct}% de desconto (R$ ${val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`}
+                      >
+                        {pct}% (R$ {val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Seletor de Forma de Pagamento */}
+          <div className="pdv-payment-section">
+            <div className="pdv-section-title">
+              <CreditCard size={13} />
+              <span>Forma de Pagamento</span>
+            </div>
+
+            <div className="pdv-payment-selector-grid">
               <button
-                className={`payment-btn ${paymentMethod === 'Pix' ? 'active' : ''}`}
+                type="button"
+                className={`pdv-pay-btn ${paymentMethod === 'Pix' ? 'active pix' : ''}`}
                 onClick={() => setPaymentMethod('Pix')}
               >
-                <Smartphone size={20} />
-                Pix
+                <Smartphone size={15} />
+                <span>Pix</span>
               </button>
+              
               <button
-                className={`payment-btn ${paymentMethod === 'Dinheiro' ? 'active' : ''}`}
+                type="button"
+                className={`pdv-pay-btn ${paymentMethod === 'Dinheiro' ? 'active money' : ''}`}
                 onClick={() => setPaymentMethod('Dinheiro')}
               >
-                <Coins size={20} />
-                Dinheiro
+                <Coins size={15} />
+                <span>Dinheiro</span>
               </button>
+
               <button
-                className={`payment-btn ${paymentMethod === 'Crédito' ? 'active' : ''}`}
-                onClick={() => setPaymentMethod('Crédito')}
-              >
-                <CreditCard size={20} />
-                Cartão Crédito
-              </button>
-              <button
-                className={`payment-btn ${paymentMethod === 'Débito' ? 'active' : ''}`}
+                type="button"
+                className={`pdv-pay-btn ${paymentMethod === 'Débito' ? 'active card' : ''}`}
                 onClick={() => setPaymentMethod('Débito')}
               >
-                <CreditCard size={20} />
-                Cartão Débito
+                <CreditCard size={15} />
+                <span>Débito</span>
               </button>
+
               <button
-                className={`payment-btn ${paymentMethod === 'Fiado' ? 'active' : ''}`}
+                type="button"
+                className={`pdv-pay-btn ${paymentMethod === 'Crédito' ? 'active card' : ''}`}
+                onClick={() => setPaymentMethod('Crédito')}
+              >
+                <CreditCard size={15} />
+                <span>Crédito</span>
+              </button>
+
+              <button
+                type="button"
+                className={`pdv-pay-btn ${paymentMethod === 'Fiado' ? 'active fiado' : ''}`}
                 onClick={() => setPaymentMethod('Fiado')}
               >
-                <BookOpen size={20} />
-                Marcado / Fiado
+                <BookOpen size={15} />
+                <span>Fiado</span>
               </button>
             </div>
-          </div>
 
-          {/* Parcelas no pagamento em crédito */}
-          {paymentMethod === 'Crédito' && (
-            <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px', animation: 'modalFadeIn 0.2s ease-out' }}>
-              <div className="form-group">
-                <label>Número de Parcelas</label>
-                <select value={checkoutInstallments} onChange={(e) => setCheckoutInstallments(e.target.value)}>
+            {/* Condicional: Parcelamento no Crédito */}
+            {paymentMethod === 'Crédito' && (
+              <div className="pdv-credit-installments-box">
+                <label>Parcelamento:</label>
+                <select
+                  value={checkoutInstallments}
+                  onChange={(e) => setCheckoutInstallments(e.target.value)}
+                  className="pdv-select-field"
+                >
                   <option value="1x">1x (À vista)</option>
                   <option value="2x">2x</option>
                   <option value="3x">3x</option>
@@ -3002,95 +3116,92 @@ function PDVView({
                   <option value="12x">12x</option>
                 </select>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Troco no pagamento em dinheiro */}
-          {paymentMethod === 'Dinheiro' && (
-            <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px', animation: 'modalFadeIn 0.2s ease-out' }}>
-              <div className="form-group">
-                <label>Valor Pago pelo Cliente</label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                  <span style={{ position: 'absolute', left: '12px', color: 'var(--text-muted)' }}>R$</span>
-                  <input
-                    ref={amountPaidInputRef}
-                    type="text"
-                    placeholder="0,00"
-                    style={{ paddingLeft: '32px', width: '100%' }}
-                    value={amountPaid}
-                    onChange={(e) => setAmountPaid(e.target.value)}
-                  />
+            {/* Condicional: Troco no Dinheiro */}
+            {paymentMethod === 'Dinheiro' && (
+              <div className="pdv-cash-change-box">
+                <div className="pdv-cash-row">
+                  <div className="pdv-cash-input-wrap">
+                    <label>Valor Pago:</label>
+                    <div className="pdv-cash-field">
+                      <span>R$</span>
+                      <input
+                        ref={amountPaidInputRef}
+                        type="text"
+                        placeholder="0,00"
+                        value={amountPaid}
+                        onChange={(e) => setAmountPaid(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {numericPaid > 0 && (
+                    <div className="pdv-change-badge">
+                      <span className="change-lbl">Troco:</span>
+                      <strong className="change-val">R$ {change.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                    </div>
+                  )}
                 </div>
               </div>
+            )}
+          </div>
 
-              {numericPaid > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--success-glow)', border: '1px solid var(--success)', marginTop: '4px' }}>
-                  <span style={{ fontWeight: '500' }}>Troco a devolver:</span>
-                  <strong style={{ color: 'var(--success)', fontSize: '16px' }}>R$ {change.toFixed(2)}</strong>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Agendamento de Entrega Form */}
-          <div style={{
-            marginTop: '16px',
-            padding: '12px 14px',
-            border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-md)',
-            backgroundColor: 'var(--bg-tertiary)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={() => setRequiresDelivery(!requiresDelivery)}>
+          {/* Agendamento de Entrega (Compacto com Switch / Accordion) */}
+          <div className={`pdv-delivery-card ${requiresDelivery ? 'expanded' : ''}`}>
+            <div
+              className="pdv-delivery-header"
+              onClick={() => setRequiresDelivery(!requiresDelivery)}
+            >
+              <div className="pdv-delivery-title">
+                <Truck size={15} className="pdv-delivery-icon" />
+                <span className="pdv-delivery-label">Agendar entrega deste pedido?</span>
+              </div>
               <input
                 type="checkbox"
                 checked={requiresDelivery}
                 onChange={(e) => setRequiresDelivery(e.target.checked)}
-                style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                className="pdv-custom-checkbox"
                 onClick={(e) => e.stopPropagation()}
               />
-              <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>Agendar entrega deste pedido?</span>
             </div>
 
             {requiresDelivery && (
-              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px', animation: 'modalFadeIn 0.2s ease-out' }}>
-                <div>
-                  <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Recebedor / Contato na Obra</label>
+              <div className="pdv-delivery-fields">
+                <div className="pdv-field-group">
+                  <label>Recebedor / Contato</label>
                   <input
                     type="text"
-                    placeholder="Nome de quem vai receber..."
+                    placeholder="Nome do contato..."
                     value={receiverName}
                     onChange={(e) => setReceiverName(e.target.value)}
-                    style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
                   />
                 </div>
-                <div>
-                  <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Endereço de Entrega</label>
+                <div className="pdv-field-group">
+                  <label>Endereço de Entrega</label>
                   <input
                     type="text"
-                    placeholder="Rua, número, bairro, cidade..."
+                    placeholder="Rua, número, bairro..."
                     value={deliveryAddress}
                     onChange={(e) => setDeliveryAddress(e.target.value)}
-                    style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
                   />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                  <div>
-                    <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Data Programada</label>
+                <div className="pdv-fields-row">
+                  <div className="pdv-field-group">
+                    <label>Data Programada</label>
                     <input
                       type="date"
                       value={deliveryDate}
                       onChange={(e) => setDeliveryDate(e.target.value)}
-                      style={{ padding: '6px 8px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
                     />
                   </div>
-                  <div>
-                    <label className="input-label" style={{ fontSize: '10px', marginBottom: '2px', display: 'block', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Observações</label>
+                  <div className="pdv-field-group">
+                    <label>Observações</label>
                     <input
                       type="text"
-                      placeholder="Instruções de entrega..."
+                      placeholder="Instruções..."
                       value={deliveryNotes}
                       onChange={(e) => setDeliveryNotes(e.target.value)}
-                      style={{ padding: '8px 10px', fontSize: '12px', width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}
                     />
                   </div>
                 </div>
@@ -3098,44 +3209,68 @@ function PDVView({
             )}
           </div>
 
-          <div style={{ flexGrow: 1 }}></div>
-
-          <div className="checkout-row total" style={{ marginTop: '16px' }}>
-            <span>TOTAL</span>
-            <span>R$ {totalCartWithDiscount.toFixed(2)}</span>
-          </div>
-
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-            <span>Itens no carrinho: {cart.reduce((sum, i) => sum + i.quantity, 0)}</span>
-            <span>Lucro presumido nesta venda: R$ {profit.toFixed(2)}</span>
-          </div>
         </div>
 
-        <div className="checkout-footer">
-          <button
-            className="btn-primary"
-            disabled={cart.length === 0}
-            onClick={() => {
-              const deliveryDetails = requiresDelivery ? {
-                requiresDelivery: true,
-                address: deliveryAddress,
-                date: deliveryDate,
-                receiver: receiverName,
-                notes: deliveryNotes,
-                status: 'Pendente',
-                deliveredAt: null
-              } : null;
-              onCheckout(deliveryDetails);
-              setRequiresDelivery(false);
-              setDeliveryAddress('');
-              setDeliveryDate('');
-              setReceiverName('');
-              setDeliveryNotes('');
-            }}
-          >
-            <Check size={20} />
-            Finalizar Venda (Confirmar)
-          </button>
+        {/* 3. Rodapé Fixo / Pinned Footer (Total + Botões de Ação) */}
+        <div className="pdv-checkout-footer-pinned">
+          
+          {/* Card Total */}
+          <div className="pdv-total-banner">
+            <div className="pdv-total-left">
+              <span className="pdv-total-caption">TOTAL DA VENDA</span>
+              <div className="pdv-total-stats">
+                <span>{cart.reduce((sum, i) => sum + i.quantity, 0)} itens</span>
+                <span className="dot">•</span>
+                <span>Lucro: R$ {profit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+            <div className="pdv-total-right">
+              <span className="pdv-total-currency">R$</span>
+              <span className="pdv-total-amount">{totalCartWithDiscount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+
+          {/* Botões de Ação */}
+          <div className={`pdv-actions-grid ${cart.length > 0 ? 'two-buttons' : 'single-button'}`}>
+            {cart.length > 0 && (
+              <button
+                type="button"
+                className="pdv-btn-quote"
+                onClick={onSaveQuote}
+                title="Salvar como Orçamento Comercial sem baixar estoque (F6)"
+              >
+                <FileSpreadsheet size={15} />
+                <span>Orçamento (F6)</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              className="pdv-btn-finalize"
+              disabled={cart.length === 0}
+              onClick={() => {
+                const deliveryDetails = requiresDelivery ? {
+                  requiresDelivery: true,
+                  address: deliveryAddress,
+                  date: deliveryDate,
+                  receiver: receiverName,
+                  notes: deliveryNotes,
+                  status: 'Pendente',
+                  deliveredAt: null
+                } : null;
+                onCheckout(deliveryDetails);
+                setRequiresDelivery(false);
+                setDeliveryAddress('');
+                setDeliveryDate('');
+                setReceiverName('');
+                setDeliveryNotes('');
+              }}
+            >
+              <Check size={18} />
+              <span>Finalizar Venda (F4)</span>
+            </button>
+          </div>
+
         </div>
       </div>
     </div>
@@ -6515,9 +6650,48 @@ function InvoiceModal({ sale, onClose }) {
 // COMPONENTE: MODAL DE FECHAMENTO DE CAIXA
 // ==========================================
 function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], onClose, onSave }) {
+  const [countingMode, setCountingMode] = useState('direct'); // 'direct' ou 'denominations'
   const [actualCash, setActualCash] = useState('');
   const [sangria, setSangria] = useState('');
   const [observations, setObservations] = useState('');
+  const [isPrintingReport, setIsPrintingReport] = useState(false);
+
+  // Contagem por cédulas e moedas
+  const [denominations, setDenominations] = useState({
+    n200: '',
+    n100: '',
+    n50: '',
+    n20: '',
+    n10: '',
+    n5: '',
+    n2: '',
+    m1: '',
+    m050: '',
+    m025: '',
+    m010: '',
+    m005: ''
+  });
+
+  const updateDenomination = (key, val) => {
+    const updated = { ...denominations, [key]: val };
+    setDenominations(updated);
+
+    const total = 
+      ((parseInt(updated.n200) || 0) * 200) +
+      ((parseInt(updated.n100) || 0) * 100) +
+      ((parseInt(updated.n50) || 0) * 50) +
+      ((parseInt(updated.n20) || 0) * 20) +
+      ((parseInt(updated.n10) || 0) * 10) +
+      ((parseInt(updated.n5) || 0) * 5) +
+      ((parseInt(updated.n2) || 0) * 2) +
+      ((parseInt(updated.m1) || 0) * 1) +
+      ((parseInt(updated.m050) || 0) * 0.5) +
+      ((parseInt(updated.m025) || 0) * 0.25) +
+      ((parseInt(updated.m010) || 0) * 0.1) +
+      ((parseInt(updated.m005) || 0) * 0.05);
+
+    setActualCash(total > 0 ? total.toFixed(2) : '');
+  };
 
   // Filtrar vendas, despesas e transações do cofre do dia específico para a loja logada
   const dateStr = date; // YYYY-MM-DD
@@ -6528,6 +6702,8 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
   const totalSales = daySales.reduce((acc, s) => acc + s.totalPrice, 0);
   const totalCashSales = daySales.filter(s => s.paymentMethod === 'Dinheiro').reduce((acc, s) => acc + s.totalPrice, 0);
   const totalPixSales = daySales.filter(s => s.paymentMethod === 'Pix').reduce((acc, s) => acc + s.totalPrice, 0);
+  const totalCreditCardSales = daySales.filter(s => s.paymentMethod.includes('Crédito')).reduce((acc, s) => acc + s.totalPrice, 0);
+  const totalDebitCardSales = daySales.filter(s => s.paymentMethod.includes('Débito')).reduce((acc, s) => acc + s.totalPrice, 0);
   const totalCardSales = daySales.filter(s => s.paymentMethod.includes('Cartão')).reduce((acc, s) => acc + s.totalPrice, 0);
 
   const totalExpenses = dayExpenses.reduce((acc, e) => acc + e.amount, 0);
@@ -6536,13 +6712,15 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
   const totalVaultDeposits = dayVaultTransactions.filter(vt => vt.type === 'deposit').reduce((acc, vt) => acc + vt.amount, 0);
   const totalVaultWithdrawals = dayVaultTransactions.filter(vt => vt.type === 'withdrawal').reduce((acc, vt) => acc + vt.amount, 0);
 
-  // O "dinheiro em caixa esperado" antes de qualquer nova sangria do fechamento
+  // Dinheiro esperado na gaveta
   const expectedCashBeforeSangria = totalCashSales - totalCashExpenses - totalVaultDeposits + totalVaultWithdrawals;
 
-  const handleSave = () => {
-    const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;
-    const sangriaVal = parseFloat(sangria.replace(',', '.')) || 0;
+  const cashVal = parseFloat(String(actualCash).replace(',', '.')) || 0;
+  const sangriaVal = parseFloat(String(sangria).replace(',', '.')) || 0;
+  const expectedCash = expectedCashBeforeSangria - sangriaVal;
+  const currentDiff = cashVal - expectedCash;
 
+  const handleSave = () => {
     const maxAllowed = Math.max(0, expectedCashBeforeSangria);
     if (sangriaVal > maxAllowed) {
       alert(`A sangria (R$ ${sangriaVal.toFixed(2)}) não pode ser maior do que o dinheiro disponível em caixa (R$ ${maxAllowed.toFixed(2)}).`);
@@ -6563,100 +6741,244 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
     });
   };
 
-  const cashVal = parseFloat(actualCash.replace(',', '.')) || 0;
-  const sangriaVal = parseFloat(sangria.replace(',', '.')) || 0;
-  const expectedCash = expectedCashBeforeSangria - sangriaVal;
-  const currentDiff = cashVal - expectedCash;
+  const handlePrintReport = () => {
+    window.print();
+  };
 
   return (
-    <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
-      <div className="modal-content glass-card" style={{ width: '100%', maxWidth: '500px', padding: '24px', borderRadius: 'var(--radius-lg)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
-            <CheckCircle size={20} className="text-primary" /> Fechamento de Caixa
+    <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+      <div className="modal-content glass-card" style={{ width: '100%', maxWidth: '620px', maxHeight: '90vh', overflowY: 'auto', padding: '24px', borderRadius: 'var(--radius-lg)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+          <h2 style={{ fontSize: '19px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', margin: 0 }}>
+            <CheckCircle size={22} style={{ color: 'var(--primary)' }} /> Fechamento de Caixa Diário
           </h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={20} /></button>
         </div>
 
-        <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '16px', borderRadius: 'var(--radius-md)', marginBottom: '20px' }}>
-          <div style={{ fontSize: '14px', fontWeight: '700', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-            Resumo do Dia: {dateStr.split('-').reverse().join('/')}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}>
-            <span style={{ color: 'var(--text-secondary)' }}>Vendas Totais:</span>
-            <span style={{ fontWeight: '700' }}>R$ {totalSales.toFixed(2)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '12px', paddingLeft: '12px' }}>
-            <span style={{ color: 'var(--text-muted)' }}>- Dinheiro:</span>
-            <span style={{ color: 'var(--text-secondary)' }}>R$ {totalCashSales.toFixed(2)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '12px', paddingLeft: '12px' }}>
-            <span style={{ color: 'var(--text-muted)' }}>- Pix:</span>
-            <span style={{ color: 'var(--text-secondary)' }}>R$ {totalPixSales.toFixed(2)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '12px', paddingLeft: '12px' }}>
-            <span style={{ color: 'var(--text-muted)' }}>- Cartão:</span>
-            <span style={{ color: 'var(--text-secondary)' }}>R$ {totalCardSales.toFixed(2)}</span>
+        {/* Resumo Consolidado do Dia */}
+        <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '16px', borderRadius: 'var(--radius-md)', marginBottom: '18px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+            <span style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-primary)' }}>
+              Movimentação do Dia: {dateStr.split('-').reverse().join('/')}
+            </span>
+            <span style={{ fontSize: '11px', backgroundColor: 'var(--bg-secondary)', padding: '3px 8px', borderRadius: '4px', fontWeight: '700', color: 'var(--text-muted)' }}>
+              {storeId === 'loja-1' ? 'Loja 1' : 'Loja 2'}
+            </span>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '13px' }}>
-            <span style={{ color: 'var(--text-secondary)' }}>Despesas (Retiradas):</span>
-            <span style={{ fontWeight: '700', color: 'var(--danger)' }}>- R$ {totalExpenses.toFixed(2)}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+            <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '10px 12px', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>Vendas Totais do Dia</div>
+              <div style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)' }}>R$ {totalSales.toFixed(2)}</div>
+            </div>
+            <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '10px 12px', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>Entradas em Dinheiro</div>
+              <div style={{ fontSize: '16px', fontWeight: '800', color: 'var(--success)' }}>+ R$ {totalCashSales.toFixed(2)}</div>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-color)', fontSize: '15px' }}>
-            <span style={{ fontWeight: '800' }}>Dinheiro Esperado em Gaveta:</span>
-            <span style={{ fontWeight: '800', color: 'var(--primary)' }}>R$ {expectedCash.toFixed(2)}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', padding: '0 4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>• Vendas em PIX:</span>
+              <strong style={{ color: 'var(--text-primary)' }}>R$ {totalPixSales.toFixed(2)}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>• Vendas em Cartões (Crédito/Débito):</span>
+              <strong style={{ color: 'var(--text-primary)' }}>R$ {totalCardSales.toFixed(2)}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>• Despesas / Sangrias do Caixa Físico:</span>
+              <strong style={{ color: 'var(--danger)' }}>- R$ {totalCashExpenses.toFixed(2)}</strong>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px', paddingTop: '10px', borderTop: '1px solid var(--border-color)' }}>
+            <span style={{ fontWeight: '800', fontSize: '14px', color: 'var(--text-primary)' }}>Dinheiro Esperado em Gaveta:</span>
+            <span style={{ fontWeight: '900', fontSize: '18px', color: 'var(--primary)' }}>R$ {expectedCash.toFixed(2)}</span>
           </div>
         </div>
 
-        <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Valor em Dinheiro Físico na Gaveta (R$)</label>
-          <input
-            type="number"
-            step="0.01"
-            placeholder="0.00"
-            value={actualCash}
-            onChange={(e) => setActualCash(e.target.value)}
-            style={{ width: '100%' }}
-          />
+        {/* Alternador de Modo de Contagem */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', backgroundColor: 'var(--bg-secondary)', padding: '4px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+          <button
+            type="button"
+            onClick={() => setCountingMode('direct')}
+            style={{
+              flex: 1,
+              padding: '8px 12px',
+              fontSize: '12px',
+              fontWeight: '700',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: countingMode === 'direct' ? 'var(--primary)' : 'transparent',
+              color: countingMode === 'direct' ? '#fff' : 'var(--text-secondary)'
+            }}
+          >
+            ⚡ Digitação Rápida do Total
+          </button>
+          <button
+            type="button"
+            onClick={() => setCountingMode('denominations')}
+            style={{
+              flex: 1,
+              padding: '8px 12px',
+              fontSize: '12px',
+              fontWeight: '700',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: countingMode === 'denominations' ? 'var(--primary)' : 'transparent',
+              color: countingMode === 'denominations' ? '#fff' : 'var(--text-secondary)'
+            }}
+          >
+            🧮 Contar Cédulas & Moedas
+          </button>
         </div>
 
-        <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Sangria (Transferir para o Cofre) (R$)</label>
-          <input
-            type="number"
-            step="0.01"
-            placeholder="0.00"
-            value={sangria}
-            onChange={(e) => setSangria(e.target.value)}
-            style={{ width: '100%' }}
-          />
+        {/* Modo 1: Digitação Rápida */}
+        {countingMode === 'direct' ? (
+          <div className="form-group" style={{ marginBottom: '14px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '700' }}>
+              Valor Total em Dinheiro Físico Contado na Gaveta (R$) *
+            </label>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <span style={{ position: 'absolute', left: '14px', fontWeight: '700', color: 'var(--text-muted)' }}>R$</span>
+              <input
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                value={actualCash}
+                onChange={(e) => setActualCash(e.target.value)}
+                style={{ width: '100%', paddingLeft: '40px', fontWeight: '800', fontSize: '15px' }}
+                autoFocus
+              />
+            </div>
+          </div>
+        ) : (
+          /* Modo 2: Calculadora de Cédulas & Moedas */
+          <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', marginBottom: '14px' }}>
+            <div style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-primary)', marginBottom: '10px' }}>
+              Quantidades Contadas na Gaveta:
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '10px' }}>
+              {[
+                { label: 'R$ 200', key: 'n200' },
+                { label: 'R$ 100', key: 'n100' },
+                { label: 'R$ 50', key: 'n50' },
+                { label: 'R$ 20', key: 'n20' },
+                { label: 'R$ 10', key: 'n10' },
+                { label: 'R$ 5', key: 'n5' },
+                { label: 'R$ 2', key: 'n2' },
+                { label: 'R$ 1', key: 'm1' },
+                { label: 'R$ 0,50', key: 'm050' },
+                { label: 'R$ 0,25', key: 'm025' },
+                { label: 'R$ 0,10', key: 'm010' },
+                { label: 'R$ 0,05', key: 'm005' }
+              ].map(item => (
+                <div key={item.key} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)' }}>{item.label}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={denominations[item.key]}
+                    onChange={e => updateDenomination(item.key, e.target.value)}
+                    style={{ padding: '6px 8px', fontSize: '12px', fontWeight: '700', textAlign: 'center' }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid var(--border-color)', fontSize: '13px' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Soma calculada:</span>
+              <strong style={{ fontSize: '16px', color: 'var(--text-primary)' }}>R$ {cashVal.toFixed(2)}</strong>
+            </div>
+          </div>
+        )}
+
+        {/* Sangria para o Cofre */}
+        <div className="form-group" style={{ marginBottom: '14px' }}>
+          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '700' }}>
+            Sangria de Fechamento (Transferir para o Cofre Seguro) (R$)
+          </label>
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <span style={{ position: 'absolute', left: '14px', fontWeight: '700', color: 'var(--text-muted)' }}>R$</span>
+            <input
+              type="number"
+              step="0.01"
+              placeholder="0.00"
+              value={sangria}
+              onChange={(e) => setSangria(e.target.value)}
+              style={{ width: '100%', paddingLeft: '40px' }}
+            />
+          </div>
           <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
             Máximo disponível para sangria: <strong>R$ {Math.max(0, expectedCashBeforeSangria).toFixed(2)}</strong>
           </span>
         </div>
 
-        <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Diferença</label>
-          <div style={{ padding: '10px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', color: currentDiff === 0 ? 'var(--text-secondary)' : (currentDiff < 0 ? 'var(--danger)' : 'var(--success)'), fontWeight: '700' }}>
-            R$ {currentDiff.toFixed(2)} {currentDiff < 0 ? '(Falta)' : (currentDiff > 0 ? '(Sobra)' : '(Exato)')}
+        {/* Status da Diferença / Quebra */}
+        <div style={{ marginBottom: '14px' }}>
+          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '700' }}>
+            Conferência / Apuração de Caixa
+          </label>
+          <div style={{ 
+            padding: '12px 16px', 
+            borderRadius: 'var(--radius-md)', 
+            backgroundColor: currentDiff === 0 ? 'rgba(34, 197, 94, 0.1)' : (currentDiff < 0 ? 'rgba(239, 68, 68, 0.1)' : 'rgba(18, 121, 138, 0.1)'),
+            border: `1px solid ${currentDiff === 0 ? 'rgba(34, 197, 94, 0.3)' : (currentDiff < 0 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(18, 121, 138, 0.3)')}`,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <div>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: '700', color: 'var(--text-muted)' }}>Status</div>
+              <div style={{ fontWeight: '800', fontSize: '14px', color: currentDiff === 0 ? 'var(--success)' : (currentDiff < 0 ? 'var(--danger)' : 'var(--primary)') }}>
+                {currentDiff === 0 ? '✅ Caixa Bateu Exato (Sem Diferença)' : (currentDiff < 0 ? '⚠️ Falta de Caixa (Quebra)' : '🎉 Sobra de Caixa')}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: '700', color: 'var(--text-muted)' }}>Diferença</div>
+              <div style={{ fontWeight: '900', fontSize: '16px', color: currentDiff === 0 ? 'var(--success)' : (currentDiff < 0 ? 'var(--danger)' : 'var(--primary)') }}>
+                {currentDiff >= 0 ? '+' : ''} R$ {currentDiff.toFixed(2)}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="form-group" style={{ marginBottom: '24px' }}>
-          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Observações (Opcional)</label>
+        {/* Observações */}
+        <div className="form-group" style={{ marginBottom: '20px' }}>
+          <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '700' }}>Observações do Operador (Opcional)</label>
           <textarea
             rows="2"
+            placeholder="Ex: Tudo conferido, comprovantes arquivados..."
             value={observations}
             onChange={(e) => setObservations(e.target.value)}
             style={{ width: '100%', resize: 'vertical' }}
           ></textarea>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-          <button onClick={onClose} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: '600' }}>Cancelar</button>
-          <button onClick={handleSave} className="btn-primary" style={{ padding: '10px 24px', fontWeight: '700' }}>Confirmar Fechamento</button>
+        {/* Botões de Ação */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handlePrintReport}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', fontSize: '13px', fontWeight: '700' }}
+          >
+            <Printer size={16} /> Imprimir Comprovante
+          </button>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button onClick={onClose} className="btn-secondary" style={{ padding: '10px 18px', fontWeight: '600' }}>
+              Cancelar
+            </button>
+            <button onClick={handleSave} className="btn-primary" style={{ padding: '10px 24px', fontWeight: '800' }}>
+              Confirmar Fechamento
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -7001,6 +7323,1014 @@ function BillsView({ bills, onSaveBill, onDeleteBill, onPayBill, storeId }) {
         </div>
       )}
 
+    </div>
+  );
+}
+
+// ==========================================
+// 10. MÓDULO: ORÇAMENTOS E COTAÇÕES
+// ==========================================
+
+export const generateWhatsAppQuoteLink = (quote) => {
+  const phone = (quote.customerPhone || '').replace(/\D/g, '');
+  const items = quote.items || [];
+  const itemsText = items.map((i, idx) => `  ${idx + 1}. *${i.quantity}x* ${i.name} - R$ ${(i.salePrice * i.quantity).toFixed(2)}`).join('\n');
+  const validDate = quote.validUntil ? new Date(quote.validUntil).toLocaleDateString('pt-BR') : '7 dias';
+
+  const text = `🏠 *NOVO LAR - MATERIAIS DE CONSTRUÇÃO*\n` +
+    `Olá *${quote.customerName || 'Cliente'}*, segue o seu orçamento solicitado:\n\n` +
+    `📄 *Orçamento Nº:* #${quote.id}\n` +
+    `📅 *Validade da proposta:* ${validDate}\n\n` +
+    `📦 *ITENS COTADOS:*\n` +
+    `${itemsText}\n\n` +
+    `💰 *VALOR TOTAL: R$ ${quote.totalPrice.toFixed(2)}*\n\n` +
+    (quote.notes ? `📝 *Observações:* ${quote.notes}\n\n` : '') +
+    `⚠️ _Valores sujeitos à alteração e disponibilidade de estoque no momento da compra._\n\n` +
+    `Para aprovar ou tirar dúvidas, basta responder esta mensagem! 🔨🤝`;
+
+  const encoded = encodeURIComponent(text);
+  if (phone.length >= 10) {
+    const fullPhone = phone.startsWith('55') ? phone : `55${phone}`;
+    return `https://wa.me/${fullPhone}?text=${encoded}`;
+  }
+  return `https://wa.me/?text=${encoded}`;
+};
+
+export function QuotesView({
+  quotes = [],
+  onOpenCreateModal,
+  onLoadQuoteIntoCart,
+  onDeleteQuote,
+  onUpdateQuoteStatus,
+  onPrintQuote
+}) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'Pendente' | 'Aprovado' | 'Cancelado'
+
+  const filteredQuotes = quotes.filter(q => {
+    const nameMatch = (q.customerName || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const idMatch = (q.id || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const phoneMatch = (q.customerPhone || '').includes(searchTerm);
+    const matchesSearch = nameMatch || idMatch || phoneMatch;
+
+    if (statusFilter === 'all') return matchesSearch;
+    return matchesSearch && q.status === statusFilter;
+  });
+
+  const totalQuotesCount = quotes.length;
+  const pendingCount = quotes.filter(q => q.status === 'Pendente').length;
+  const approvedCount = quotes.filter(q => q.status === 'Aprovado').length;
+  const totalQuotedValue = quotes.reduce((acc, q) => acc + (parseFloat(q.totalPrice) || 0), 0);
+  const pendingQuotedValue = quotes.filter(q => q.status === 'Pendente').reduce((acc, q) => acc + (parseFloat(q.totalPrice) || 0), 0);
+
+  return (
+    <div className="quotes-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      
+      {/* Top Action Header */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '16px',
+        backgroundColor: 'var(--bg-card)',
+        padding: '18px 22px',
+        borderRadius: 'var(--radius-lg)',
+        border: '1px solid var(--border-color)'
+      }}>
+        <div>
+          <h2 style={{ fontSize: '18px', fontWeight: '800', margin: 0, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <FileSpreadsheet size={24} style={{ color: 'var(--brand-yellow)' }} />
+            Central de Orçamentos & Cotações
+          </h2>
+          <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginTop: '2px', display: 'block' }}>
+            Monte cotações personalizadas para clientes e obras sem deduzir do estoque da loja.
+          </span>
+        </div>
+
+        <button
+          onClick={onOpenCreateModal}
+          className="btn-primary"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '12px 22px',
+            fontSize: '14px',
+            fontWeight: '800',
+            backgroundColor: 'var(--brand-yellow)',
+            color: '#000',
+            borderColor: 'var(--brand-yellow)',
+            boxShadow: '0 4px 14px rgba(255, 184, 0, 0.35)',
+            cursor: 'pointer'
+          }}
+        >
+          <Plus size={18} strokeWidth={3} />
+          Criar Novo Orçamento
+        </button>
+      </div>
+
+      {/* Top Metrics Cards */}
+      <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+        <div className="kpi-card glass-card" style={{ padding: '16px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{ padding: '12px', backgroundColor: 'rgba(255, 184, 0, 0.15)', borderRadius: 'var(--radius-md)', color: 'var(--brand-yellow)' }}>
+            <FileSpreadsheet size={24} />
+          </div>
+          <div>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>Cotações em Aberto</span>
+            <h3 style={{ fontSize: '20px', fontWeight: '800', margin: '2px 0 0 0', color: 'var(--text-primary)' }}>{pendingCount}</h3>
+            <span style={{ fontSize: '11px', color: 'var(--brand-yellow)' }}>R$ {pendingQuotedValue.toFixed(2)} em negociação</span>
+          </div>
+        </div>
+
+        <div className="kpi-card glass-card" style={{ padding: '16px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{ padding: '12px', backgroundColor: 'rgba(34, 197, 94, 0.15)', borderRadius: 'var(--radius-md)', color: 'var(--success)' }}>
+            <CheckCircle size={24} />
+          </div>
+          <div>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>Convertidos em Venda</span>
+            <h3 style={{ fontSize: '20px', fontWeight: '800', margin: '2px 0 0 0', color: 'var(--text-primary)' }}>{approvedCount}</h3>
+            <span style={{ fontSize: '11px', color: 'var(--success)' }}>Pedidos fechados com sucesso</span>
+          </div>
+        </div>
+
+        <div className="kpi-card glass-card" style={{ padding: '16px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{ padding: '12px', backgroundColor: 'rgba(59, 130, 246, 0.15)', borderRadius: 'var(--radius-md)', color: '#3b82f6' }}>
+            <DollarSign size={24} />
+          </div>
+          <div>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>Volume Total Cotado</span>
+            <h3 style={{ fontSize: '20px', fontWeight: '800', margin: '2px 0 0 0', color: 'var(--text-primary)' }}>R$ {totalQuotedValue.toFixed(2)}</h3>
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{totalQuotesCount} cotações emitidas</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabela de Orçamentos e Filtros */}
+      <div className="glass-card" style={{ padding: '20px', borderRadius: 'var(--radius-lg)' }}>
+        
+        {/* Barra de Filtro e Busca */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+          <div className="input-group" style={{ maxWidth: '380px', flex: 1 }}>
+            <Search className="input-icon" size={18} />
+            <input
+              type="text"
+              placeholder="Buscar por cliente, telefone ou nº do orçamento..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              style={{ padding: '9px 12px 9px 40px', fontSize: '13px', width: '100%' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '6px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-md)' }}>
+            <button
+              className={`filter-tab-btn ${statusFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('all')}
+              style={{
+                padding: '6px 12px',
+                fontSize: '12px',
+                fontWeight: '700',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: statusFilter === 'all' ? 'var(--primary)' : 'transparent',
+                color: statusFilter === 'all' ? '#000' : 'var(--text-secondary)',
+                cursor: 'pointer'
+              }}
+            >
+              Todos ({totalQuotesCount})
+            </button>
+            <button
+              className={`filter-tab-btn ${statusFilter === 'Pendente' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('Pendente')}
+              style={{
+                padding: '6px 12px',
+                fontSize: '12px',
+                fontWeight: '700',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: statusFilter === 'Pendente' ? 'var(--brand-yellow)' : 'transparent',
+                color: statusFilter === 'Pendente' ? '#000' : 'var(--text-secondary)',
+                cursor: 'pointer'
+              }}
+            >
+              Pendentes ({pendingCount})
+            </button>
+            <button
+              className={`filter-tab-btn ${statusFilter === 'Aprovado' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('Aprovado')}
+              style={{
+                padding: '6px 12px',
+                fontSize: '12px',
+                fontWeight: '700',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: statusFilter === 'Aprovado' ? 'var(--success)' : 'transparent',
+                color: statusFilter === 'Aprovado' ? '#fff' : 'var(--text-secondary)',
+                cursor: 'pointer'
+              }}
+            >
+              Convertidos ({approvedCount})
+            </button>
+          </div>
+        </div>
+
+        {/* Tabela de Registros */}
+        {filteredQuotes.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-secondary)' }}>
+            <FileSpreadsheet size={48} style={{ opacity: 0.25, marginBottom: '12px' }} />
+            <h3 style={{ fontSize: '15px', fontWeight: '700', margin: '0 0 6px 0', color: 'var(--text-primary)' }}>Nenhum orçamento encontrado</h3>
+            <p style={{ fontSize: '12.5px', maxWidth: '380px', margin: '0 auto 18px auto' }}>
+              Crie uma nova cotação agora mesmo adicionando os itens desejados para o seu cliente.
+            </p>
+            <button
+              onClick={onOpenCreateModal}
+              className="btn-primary"
+              style={{ padding: '8px 18px', fontSize: '13px', fontWeight: '700' }}
+            >
+              + Criar Primeiro Orçamento
+            </button>
+          </div>
+        ) : (
+          <div className="table-responsive" style={{ overflowX: 'auto' }}>
+            <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left', color: 'var(--text-secondary)' }}>
+                  <th style={{ padding: '10px 12px', fontWeight: '700' }}>Orçamento / Data</th>
+                  <th style={{ padding: '10px 12px', fontWeight: '700' }}>Cliente & Contato</th>
+                  <th style={{ padding: '10px 12px', fontWeight: '700' }}>Validade</th>
+                  <th style={{ padding: '10px 12px', fontWeight: '700' }}>Itens Cotados</th>
+                  <th style={{ padding: '10px 12px', fontWeight: '700' }}>Total (R$)</th>
+                  <th style={{ padding: '10px 12px', fontWeight: '700' }}>Status</th>
+                  <th style={{ padding: '10px 12px', fontWeight: '700', textAlign: 'right' }}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredQuotes.map(q => {
+                  const isExpired = q.validUntil && new Date(q.validUntil) < new Date() && q.status === 'Pendente';
+                  const itemsCount = (q.items || []).reduce((sum, item) => sum + (item.quantity || 1), 0);
+
+                  return (
+                    <tr key={q.id} style={{ borderBottom: '1px solid var(--border-color)', transition: 'background 0.2s' }}>
+                      <td style={{ padding: '12px' }}>
+                        <strong style={{ color: 'var(--primary)', display: 'block', fontSize: '13.5px' }}>#{q.id}</strong>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                          {q.timestamp ? new Date(q.timestamp).toLocaleDateString('pt-BR') : '-'}
+                        </span>
+                      </td>
+
+                      <td style={{ padding: '12px' }}>
+                        <div style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{q.customerName || 'Cliente Balcão'}</div>
+                        {q.customerPhone ? (
+                          <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>📞 {q.customerPhone}</span>
+                        ) : (
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Sem telefone</span>
+                        )}
+                      </td>
+
+                      <td style={{ padding: '12px' }}>
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '11.5px',
+                          color: isExpired ? 'var(--danger, #dc2626)' : 'var(--text-secondary)',
+                          fontWeight: isExpired ? '700' : '500'
+                        }}>
+                          {q.validUntil ? new Date(q.validUntil).toLocaleDateString('pt-BR') : '7 dias'}
+                          {isExpired && <span style={{ fontSize: '10px', backgroundColor: 'rgba(220, 38, 38, 0.15)', padding: '1px 5px', borderRadius: '4px' }}>Vencido</span>}
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '12px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: '600' }}>{itemsCount} {itemsCount === 1 ? 'item' : 'itens'}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {(q.items || []).map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '12px' }}>
+                        <strong style={{ fontSize: '14.5px', color: 'var(--text-primary)' }}>
+                          R$ {(parseFloat(q.totalPrice) || 0).toFixed(2)}
+                        </strong>
+                      </td>
+
+                      <td style={{ padding: '12px' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '3px 8px',
+                          borderRadius: '12px',
+                          fontSize: '11px',
+                          fontWeight: '800',
+                          backgroundColor: q.status === 'Aprovado' ? 'rgba(34, 197, 94, 0.15)' : q.status === 'Cancelado' ? 'rgba(220, 38, 38, 0.15)' : 'rgba(255, 184, 0, 0.15)',
+                          color: q.status === 'Aprovado' ? 'var(--success)' : q.status === 'Cancelado' ? 'var(--danger, #dc2626)' : 'var(--brand-yellow)'
+                        }}>
+                          {q.status || 'Pendente'}
+                        </span>
+                      </td>
+
+                      <td style={{ padding: '12px', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                          {q.status === 'Pendente' && (
+                            <button
+                              onClick={() => onLoadQuoteIntoCart(q)}
+                              className="btn-primary"
+                              style={{
+                                padding: '6px 10px',
+                                fontSize: '11.5px',
+                                fontWeight: '700',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                              title="Lançar itens no PDV para finalizar venda"
+                            >
+                              <ShoppingCart size={13} />
+                              Lançar no PDV
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => onPrintQuote(q)}
+                            style={{
+                              padding: '6px 8px',
+                              backgroundColor: 'var(--bg-tertiary)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: 'var(--radius-sm)',
+                              color: 'var(--text-primary)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                            title="Imprimir Orçamento"
+                          >
+                            <Printer size={14} />
+                          </button>
+
+                          <a
+                            href={generateWhatsAppQuoteLink(q)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              padding: '6px 8px',
+                              backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                              border: '1px solid rgba(34, 197, 94, 0.3)',
+                              borderRadius: 'var(--radius-sm)',
+                              color: 'var(--success)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              textDecoration: 'none'
+                            }}
+                            title="Enviar Orçamento via WhatsApp"
+                          >
+                            <Share2 size={14} />
+                          </a>
+
+                          <button
+                            onClick={() => {
+                              if (confirm(`Deseja excluir permanentemente o orçamento #${q.id}?`)) {
+                                onDeleteQuote(q.id);
+                              }
+                            }}
+                            style={{
+                              padding: '6px 8px',
+                              backgroundColor: 'transparent',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: 'var(--radius-sm)',
+                              color: 'var(--danger, #dc2626)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                            title="Excluir Orçamento"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+export function CreateQuoteModal({
+  products = [],
+  initialCart = [],
+  storeId = 'loja-1',
+  onClose,
+  onSave,
+  onPrint,
+  onLoadIntoPDV
+}) {
+  const [customerName, setCustomerName] = useState('Cliente Balcão');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [validDays, setValidDays] = useState(7);
+  const [notes, setNotes] = useState('');
+  
+  // Itens do orçamento
+  const [quoteItems, setQuoteItems] = useState(() => {
+    if (initialCart && initialCart.length > 0) {
+      return initialCart.map(i => ({
+        id: i.id,
+        code: i.code || '',
+        name: i.name,
+        quantity: parseInt(i.quantity) || 1,
+        salePrice: parseFloat(i.salePrice) || 0,
+        costPrice: parseFloat(i.costPrice) || 0,
+        unit: i.unit || 'Un'
+      }));
+    }
+    return [];
+  });
+
+  // Busca rápida de produtos do catálogo
+  const [productSearch, setProductSearch] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [savedQuote, setSavedQuote] = useState(null);
+
+  useEffect(() => {
+    if (!productSearch.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    const term = productSearch.toLowerCase();
+    const matches = products.filter(p =>
+      p.name.toLowerCase().includes(term) ||
+      (p.code && p.code.toLowerCase().includes(term))
+    );
+    setSearchResults(matches.slice(0, 6));
+  }, [productSearch, products]);
+
+  const handleAddProductToQuote = (prod) => {
+    const existingIndex = quoteItems.findIndex(i => String(i.id) === String(prod.id));
+    if (existingIndex !== -1) {
+      const updated = [...quoteItems];
+      updated[existingIndex].quantity += 1;
+      setQuoteItems(updated);
+    } else {
+      setQuoteItems([...quoteItems, {
+        id: prod.id,
+        code: prod.code || '',
+        name: prod.name,
+        quantity: 1,
+        salePrice: parseFloat(prod.salePrice) || 0,
+        costPrice: parseFloat(prod.costPrice) || 0,
+        unit: prod.unit || 'Un'
+      }]);
+    }
+    setProductSearch('');
+    setSearchResults([]);
+  };
+
+  const handleUpdateItemQty = (index, delta) => {
+    const updated = [...quoteItems];
+    const newQty = (updated[index].quantity || 1) + delta;
+    if (newQty <= 0) {
+      updated.splice(index, 1);
+    } else {
+      updated[index].quantity = newQty;
+    }
+    setQuoteItems(updated);
+  };
+
+  const handleRemoveItem = (index) => {
+    const updated = [...quoteItems];
+    updated.splice(index, 1);
+    setQuoteItems(updated);
+  };
+
+  const totalQuoteValue = quoteItems.reduce((acc, i) => acc + (i.salePrice * i.quantity), 0);
+  const totalItemCount = quoteItems.reduce((acc, i) => acc + i.quantity, 0);
+
+  const handleSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (quoteItems.length === 0) {
+      alert("Por favor, adicione pelo menos um produto ao orçamento.");
+      return;
+    }
+
+    const validUntilDate = new Date();
+    validUntilDate.setDate(validUntilDate.getDate() + parseInt(validDays));
+
+    const quoteData = {
+      id: `ORC-${Date.now().toString().slice(-6)}`,
+      timestamp: new Date().toISOString(),
+      validUntil: validUntilDate.toISOString(),
+      customerName: customerName.trim() || 'Cliente Balcão',
+      customerPhone: customerPhone.trim(),
+      storeId: storeId,
+      totalPrice: totalQuoteValue,
+      items: quoteItems,
+      notes: notes.trim(),
+      status: 'Pendente'
+    };
+
+    setSavedQuote(quoteData);
+    if (onSave) {
+      await onSave(quoteData);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+      <div className="modal-content glass-card" style={{ width: '100%', maxWidth: '640px', maxHeight: '90vh', overflowY: 'auto', padding: '24px', borderRadius: 'var(--radius-lg)', animation: 'modalFadeIn 0.2s ease-out' }}>
+        
+        {!savedQuote ? (
+          <div>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', margin: 0 }}>
+                  <FileSpreadsheet size={22} style={{ color: 'var(--brand-yellow)' }} /> Criar Novo Orçamento Comercial
+                </h2>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Monte a proposta sem alterar o estoque atual</span>
+              </div>
+              <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={20} /></button>
+            </div>
+
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              
+              {/* Informações do Cliente */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: '700' }}>Nome do Cliente / Obra *</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Carlos Ferreira / Reforma"
+                    value={customerName}
+                    onChange={e => setCustomerName(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '13px' }}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: '700' }}>Telefone / WhatsApp</label>
+                  <input
+                    type="text"
+                    placeholder="(00) 00000-0000"
+                    value={customerPhone}
+                    onChange={e => setCustomerPhone(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '13px' }}
+                  />
+                </div>
+              </div>
+
+              {/* Seletor de Produtos do Estoque */}
+              <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)' }}>
+                  Adicionar Produtos do Catálogo:
+                </label>
+                <div className="input-group" style={{ position: 'relative' }}>
+                  <Search className="input-icon" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Digite o nome ou código de barras para buscar e adicionar..."
+                    value={productSearch}
+                    onChange={e => setProductSearch(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px 8px 36px', fontSize: '12.5px' }}
+                  />
+                </div>
+
+                {searchResults.length > 0 && (
+                  <div style={{
+                    marginTop: '6px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                    maxHeight: '160px',
+                    overflowY: 'auto',
+                    boxShadow: 'var(--shadow-md)'
+                  }}>
+                    {searchResults.map(p => (
+                      <div
+                        key={p.id}
+                        onClick={() => handleAddProductToQuote(p)}
+                        style={{
+                          padding: '8px 12px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          borderBottom: '1px solid var(--border-color)',
+                          cursor: 'pointer'
+                        }}
+                        className="search-item-hover"
+                      >
+                        <div>
+                          <strong style={{ fontSize: '12.5px', color: 'var(--primary)' }}>{p.name}</strong>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Cód: {p.code || '-'} | Estoque: {p.stock} {p.unit}</div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <strong style={{ fontSize: '13px' }}>R$ {parseFloat(p.salePrice).toFixed(2)}</strong>
+                          <span style={{ fontSize: '11px', backgroundColor: 'var(--primary)', color: '#000', padding: '2px 6px', borderRadius: '4px', fontWeight: '800' }}>+ Adicionar</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Lista dos Itens Selecionados */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '12.5px', fontWeight: '700', color: 'var(--text-primary)' }}>
+                    Itens da Cotação ({quoteItems.length} {quoteItems.length === 1 ? 'produto' : 'produtos'}):
+                  </span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Total de {totalItemCount} un
+                  </span>
+                </div>
+
+                {quoteItems.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '24px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border-color)', color: 'var(--text-muted)', fontSize: '12.5px' }}>
+                    Nenhum produto adicionado ainda. Busque acima para incluir produtos.
+                  </div>
+                ) : (
+                  <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {quoteItems.map((item, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '8px 12px',
+                          backgroundColor: 'var(--bg-secondary)',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--border-color)'
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
+                          <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {item.name}
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                            R$ {item.salePrice.toFixed(2)} / {item.unit || 'un'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateItemQty(index, -1)}
+                              style={{ width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                            >
+                              -
+                            </button>
+                            <span style={{ fontSize: '13px', fontWeight: '800', minWidth: '24px', textAlign: 'center' }}>
+                              {item.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateItemQty(index, 1)}
+                              style={{ width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <strong style={{ fontSize: '13px', minWidth: '70px', textAlign: 'right', color: 'var(--text-primary)' }}>
+                            R$ {(item.salePrice * item.quantity).toFixed(2)}
+                          </strong>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveItem(index)}
+                            style={{ background: 'none', border: 'none', color: 'var(--danger, #dc2626)', cursor: 'pointer', padding: '4px' }}
+                            title="Remover Item"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Validade e Observações */}
+              <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: '700' }}>Validade</label>
+                  <select
+                    value={validDays}
+                    onChange={e => setValidDays(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '12.5px' }}
+                  >
+                    <option value={3}>3 dias</option>
+                    <option value={7}>7 dias (Padrão)</option>
+                    <option value={15}>15 dias</option>
+                    <option value={30}>30 dias</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: '700' }}>Observações (Opcional)</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Entrega inclusa, pagamento à vista no Pix"
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '12.5px' }}
+                  />
+                </div>
+              </div>
+
+              {/* Total Card */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', marginTop: '4px' }}>
+                <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-secondary)' }}>Valor Total do Orçamento:</span>
+                <strong style={{ fontSize: '18px', fontWeight: '900', color: 'var(--brand-yellow)' }}>
+                  R$ {totalQuoteValue.toFixed(2)}
+                </strong>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  style={{
+                    padding: '9px 18px',
+                    backgroundColor: 'transparent',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-primary)',
+                    borderRadius: 'var(--radius-sm)',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '13px'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={quoteItems.length === 0}
+                  className="btn-primary"
+                  style={{
+                    padding: '9px 24px',
+                    fontWeight: '800',
+                    fontSize: '13.5px',
+                    backgroundColor: 'var(--brand-yellow)',
+                    color: '#000',
+                    borderColor: 'var(--brand-yellow)',
+                    opacity: quoteItems.length === 0 ? 0.5 : 1,
+                    cursor: quoteItems.length === 0 ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  Salvar Orçamento
+                </button>
+              </div>
+
+            </form>
+          </div>
+        ) : (
+          /* Tela de Sucesso */
+          <div style={{ textAlign: 'center', padding: '16px 8px' }}>
+            <div style={{
+              width: '60px',
+              height: '60px',
+              backgroundColor: 'rgba(34, 197, 94, 0.15)',
+              color: 'var(--success)',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px auto'
+            }}>
+              <CheckCircle size={36} />
+            </div>
+
+            <h3 style={{ fontSize: '20px', fontWeight: '800', margin: '0 0 6px 0', color: 'var(--text-primary)' }}>
+              Orçamento #{savedQuote.id} Gravado!
+            </h3>
+            <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', margin: '0 0 24px 0' }}>
+              Cliente: <strong>{savedQuote.customerName}</strong> • Total: <strong style={{ color: 'var(--brand-yellow)' }}>R$ {savedQuote.totalPrice.toFixed(2)}</strong>
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+              <button
+                onClick={() => onPrint(savedQuote)}
+                className="btn-secondary"
+                style={{
+                  padding: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  fontWeight: '700',
+                  fontSize: '13.5px'
+                }}
+              >
+                <Printer size={17} /> Imprimir Cotação
+              </button>
+
+              <a
+                href={generateWhatsAppQuoteLink(savedQuote)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  padding: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  fontWeight: '700',
+                  fontSize: '13.5px',
+                  backgroundColor: 'rgba(34, 197, 94, 0.18)',
+                  color: 'var(--success)',
+                  border: '1px solid rgba(34, 197, 94, 0.35)',
+                  borderRadius: 'var(--radius-md)',
+                  textDecoration: 'none'
+                }}
+              >
+                <Share2 size={17} /> Enviar no WhatsApp
+              </a>
+            </div>
+
+            <button
+              onClick={() => {
+                onLoadIntoPDV(savedQuote);
+                onClose();
+              }}
+              className="btn-primary"
+              style={{
+                width: '100%',
+                padding: '12px',
+                fontSize: '13.5px',
+                fontWeight: '800',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                marginBottom: '14px'
+              }}
+            >
+              <ShoppingCart size={17} />
+              Lançar Itens no Caixa (PDV) Agora
+            </button>
+
+            <div style={{ textAlign: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
+              <button
+                onClick={onClose}
+                style={{
+                  padding: '8px 20px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '600'
+                }}
+              >
+                Concluir e Fechar
+              </button>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+export function QuotePrintModal({ quote, onClose }) {
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const items = quote.items || [];
+  const dateFormatted = quote.timestamp ? new Date(quote.timestamp).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR');
+  const validUntilFormatted = quote.validUntil ? new Date(quote.validUntil).toLocaleDateString('pt-BR') : '7 dias';
+
+  return (
+    <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+      <div className="modal-content glass-card" style={{ width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto', padding: '24px', borderRadius: 'var(--radius-lg)' }}>
+        
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }} className="no-print">
+          <h2 style={{ fontSize: '17px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+            <FileSpreadsheet size={20} style={{ color: 'var(--brand-yellow)' }} /> Visualização de Impressão do Orçamento
+          </h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        {/* Recibo para Impressão */}
+        <div id="printable-quote" style={{ backgroundColor: '#ffffff', color: '#000000', padding: '20px', borderRadius: '6px', fontFamily: 'Courier New, monospace', fontSize: '12px', border: '1px solid #ddd' }}>
+          
+          <div style={{ textAlign: 'center', borderBottom: '1px dashed #000', paddingBottom: '10px', marginBottom: '12px' }}>
+            <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0 0 4px 0', textTransform: 'uppercase' }}>NOVO LAR MATERIAIS DE CONSTRUÇÃO</h2>
+            <div style={{ fontSize: '10px', color: '#444' }}>COTAÇÃO / ORÇAMENTO DE PREÇOS COMERCIAL</div>
+            <div style={{ fontSize: '11px', fontWeight: 'bold', marginTop: '6px' }}>ORÇAMENTO Nº: {quote.id}</div>
+          </div>
+
+          <div style={{ borderBottom: '1px dashed #000', paddingBottom: '10px', marginBottom: '12px', fontSize: '11px', lineHeight: '1.5' }}>
+            <div><strong>Data de Emissão:</strong> {dateFormatted}</div>
+            <div><strong>Validade da Proposta:</strong> {validUntilFormatted}</div>
+            <div><strong>Cliente / Solicitante:</strong> {quote.customerName || 'Cliente Balcão'}</div>
+            {quote.customerPhone && <div><strong>Contato / WhatsApp:</strong> {quote.customerPhone}</div>}
+          </div>
+
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px', fontSize: '11px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #000', textAlign: 'left' }}>
+                <th style={{ padding: '4px 0', width: '45%' }}>PRODUTO</th>
+                <th style={{ padding: '4px 0', textAlign: 'center' }}>QTD</th>
+                <th style={{ padding: '4px 0', textAlign: 'right' }}>V. UNIT</th>
+                <th style={{ padding: '4px 0', textAlign: 'right' }}>TOTAL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, idx) => (
+                <tr key={idx} style={{ borderBottom: '1px dotted #ccc' }}>
+                  <td style={{ padding: '4px 0' }}>{item.name}</td>
+                  <td style={{ padding: '4px 0', textAlign: 'center' }}>{item.quantity} {item.unit || 'un'}</td>
+                  <td style={{ padding: '4px 0', textAlign: 'right' }}>R$ {item.salePrice.toFixed(2)}</td>
+                  <td style={{ padding: '4px 0', textAlign: 'right' }}>R$ {(item.salePrice * item.quantity).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div style={{ borderTop: '1px dashed #000', paddingTop: '8px', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 'bold' }}>
+              <span>TOTAL DO ORÇAMENTO:</span>
+              <span>R$ {quote.totalPrice.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {quote.notes && (
+            <div style={{ fontSize: '10px', marginBottom: '10px', backgroundColor: '#f5f5f5', padding: '6px', borderRadius: '4px' }}>
+              <strong>Observações:</strong> {quote.notes}
+            </div>
+          )}
+
+          <div style={{ textAlign: 'center', fontSize: '9px', color: '#666', borderTop: '1px dashed #000', paddingTop: '8px', lineHeight: '1.4' }}>
+            * ESTE DOCUMENTO É UMA COTAÇÃO COMERCIAL SEM VALOR FISCAL *<br />
+            Preços e prazos válidos até {validUntilFormatted}. Sujeito à disponibilidade no fechamento.<br />
+            Agradecemos a preferência!
+          </div>
+
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '18px' }} className="no-print">
+          <button
+            onClick={onClose}
+            style={{
+              padding: '9px 16px',
+              backgroundColor: 'transparent',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-primary)',
+              borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '13px'
+            }}
+          >
+            Fechar
+          </button>
+          <a
+            href={generateWhatsAppQuoteLink(quote)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary"
+            style={{
+              padding: '9px 16px',
+              fontWeight: '700',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              textDecoration: 'none',
+              color: 'var(--success)'
+            }}
+          >
+            <Share2 size={15} /> WhatsApp
+          </a>
+          <button
+            onClick={handlePrint}
+            className="btn-primary"
+            style={{
+              padding: '9px 20px',
+              fontWeight: '800',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <Printer size={15} /> Imprimir Cotação
+          </button>
+        </div>
+
+      </div>
     </div>
   );
 }

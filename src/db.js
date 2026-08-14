@@ -1448,3 +1448,115 @@ export async function deleteVaultTransaction(id) {
   }
   return getVaultTransactions();
 }
+
+// ================== GERENCIAMENTO DE ORÇAMENTOS & COTAÇÕES ==================
+
+export async function getQuotes() {
+  const db = await loadDB();
+  return db.quotes || [];
+}
+
+export async function saveQuote(q) {
+  const quoteId = q.id ? String(q.id) : ('ORC-' + Date.now().toString().slice(-6));
+  const timestamp = q.timestamp || new Date().toISOString();
+  const validUntil = q.validUntil || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const customerName = q.customerName || 'Cliente Balcão';
+  const customerPhone = q.customerPhone || '';
+  const storeId = q.storeId || getStoreId();
+  const totalPrice = parseFloat(q.totalPrice) || 0;
+  const items = typeof q.items === 'object' ? JSON.stringify(q.items) : (q.items || '[]');
+  const notes = q.notes || '';
+  const status = q.status || 'Pendente';
+
+  if (isElectron()) {
+    await window.electronAPI.dbRun(
+      `INSERT OR REPLACE INTO quotes (id, timestamp, validUntil, customerName, customerPhone, storeId, totalPrice, items, notes, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [quoteId, timestamp, validUntil, customerName, customerPhone, storeId, totalPrice, items, notes, status]
+    );
+  }
+
+  // PUSH direto para NeonDB
+  try {
+    await initializeNeonTables();
+    await sql`
+      INSERT INTO quotes (id, timestamp, valid_until, customer_name, customer_phone, store_id, total_price, items, notes, status)
+      VALUES (${quoteId}, ${timestamp}, ${validUntil}, ${customerName}, ${customerPhone}, ${storeId}, ${totalPrice}, ${items}, ${notes}, ${status})
+      ON CONFLICT (id) DO UPDATE SET
+        timestamp = EXCLUDED.timestamp,
+        valid_until = EXCLUDED.valid_until,
+        customer_name = EXCLUDED.customer_name,
+        customer_phone = EXCLUDED.customer_phone,
+        store_id = EXCLUDED.store_id,
+        total_price = EXCLUDED.total_price,
+        items = EXCLUDED.items,
+        notes = EXCLUDED.notes,
+        status = EXCLUDED.status
+    `;
+  } catch (err) {
+    console.error("Erro ao salvar orçamento no NeonDB:", err);
+  }
+
+  return getQuotes();
+}
+
+export async function deleteQuote(id) {
+  const quoteId = String(id);
+  if (isElectron()) {
+    await window.electronAPI.dbRun('DELETE FROM quotes WHERE id = ?', [quoteId]);
+  }
+
+  try {
+    await initializeNeonTables();
+    await sql`DELETE FROM quotes WHERE id = ${quoteId}`;
+  } catch (e) {
+    console.error("Erro ao excluir orçamento na nuvem:", e);
+  }
+  return getQuotes();
+}
+
+export async function updateQuoteStatus(id, status) {
+  const quoteId = String(id);
+  if (isElectron()) {
+    await window.electronAPI.dbRun('UPDATE quotes SET status = ? WHERE id = ?', [status, quoteId]);
+  }
+
+  try {
+    await initializeNeonTables();
+    await sql`UPDATE quotes SET status = ${status} WHERE id = ${quoteId}`;
+  } catch (e) {
+    console.error("Erro ao atualizar status do orçamento na nuvem:", e);
+  }
+  return getQuotes();
+}
+
+export async function deleteCreditAccount(id) {
+  const accountId = String(id);
+  if (isElectron()) {
+    await window.electronAPI.dbRun('DELETE FROM credit_accounts WHERE id = ?', [accountId]);
+  }
+
+  try {
+    await initializeNeonTables();
+    await sql`DELETE FROM credit_accounts WHERE id = ${accountId}`;
+  } catch (e) {
+    console.error("Erro ao excluir conta de fiado na nuvem:", e);
+  }
+  return getCreditAccounts();
+}
+
+export async function deleteClosure(id) {
+  const closureId = String(id);
+  if (isElectron()) {
+    await window.electronAPI.dbRun('DELETE FROM closures WHERE id = ?', [closureId]);
+  }
+
+  try {
+    await initializeNeonTables();
+    await sql`DELETE FROM closures WHERE id = ${closureId}`;
+  } catch (e) {
+    console.error("Erro ao excluir fechamento na nuvem:", e);
+  }
+  return getClosures();
+}
+
