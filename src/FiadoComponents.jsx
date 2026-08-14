@@ -10,6 +10,7 @@ export function FiadoCheckoutModal({ creditAccounts, onConfirm, onClose, onCreat
   const [newRole, setNewRole] = useState('Pedreiro');
   const [newPhone, setNewPhone] = useState('');
   const [newAddress, setNewAddress] = useState('');
+  const [newBalance, setNewBalance] = useState('');
 
   const [dueDate, setDueDate] = useState(() => {
     // Default to 30 days from now
@@ -28,7 +29,8 @@ export function FiadoCheckoutModal({ creditAccounts, onConfirm, onClose, onCreat
       name: newName,
       role: newRole,
       phone: newPhone,
-      address: newAddress
+      address: newAddress,
+      balance: parseFloat(newBalance.replace(',', '.')) || 0
     };
     onCreateAccount(account);
     setIsCreating(false);
@@ -112,6 +114,11 @@ export function FiadoCheckoutModal({ creditAccounts, onConfirm, onClose, onCreat
               <div className="form-group">
                 <label>Endereço Residencial / Comercial</label>
                 <input type="text" value={newAddress} onChange={e => setNewAddress(e.target.value)} placeholder="Ex: Rua das Flores, 123 - Centro" />
+              </div>
+
+              <div className="form-group">
+                <label>Saldo Inicial Acumulado (R$ - Devedor anterior se houver)</label>
+                <input type="text" value={newBalance} onChange={e => setNewBalance(e.target.value)} placeholder="0,00" />
               </div>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
@@ -208,6 +215,7 @@ export function CreditAccountsView({ creditAccounts, onCreateAccount, onAddTrans
   const [newRole, setNewRole] = useState('Pedreiro');
   const [newPhone, setNewPhone] = useState('');
   const [newAddress, setNewAddress] = useState('');
+  const [newBalance, setNewBalance] = useState('');
 
   const selectedAccount = creditAccounts.find(acc => acc.id === selectedAccountId);
 
@@ -259,13 +267,15 @@ export function CreditAccountsView({ creditAccounts, onCreateAccount, onAddTrans
       name: newName,
       role: newRole,
       phone: newPhone,
-      address: newAddress
+      address: newAddress,
+      balance: parseFloat(newBalance.replace(',', '.')) || 0
     };
     onCreateAccount(account);
     setIsDirectCreating(false);
     setNewName('');
     setNewPhone('');
     setNewAddress('');
+    setNewBalance('');
   };
 
   return (
@@ -648,6 +658,11 @@ export function CreditAccountsView({ creditAccounts, onCreateAccount, onAddTrans
               <div className="form-group">
                 <label>Endereço Residencial / Comercial</label>
                 <input type="text" value={newAddress} onChange={e => setNewAddress(e.target.value)} placeholder="Ex: Av. Principal, 500 - Bloco B" />
+              </div>
+
+              <div className="form-group">
+                <label>Saldo Inicial Acumulado (R$ - Devedor anterior se houver)</label>
+                <input type="text" value={newBalance} onChange={e => setNewBalance(e.target.value)} placeholder="0,00" />
               </div>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>

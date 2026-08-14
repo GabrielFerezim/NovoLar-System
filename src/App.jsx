@@ -35,7 +35,8 @@ import {
   Users,
   BookOpen,
   ArrowRightLeft,
-  Lock
+  Lock,
+  PlusCircle
 } from 'lucide-react';
 import {
   getProducts,
@@ -61,7 +62,10 @@ import {
   clearAllDatabase,
   getVaultTransactions,
   saveVaultTransaction,
-  deleteVaultTransaction
+  deleteVaultTransaction,
+  getBills,
+  saveBill,
+  deleteBill
 } from './db';
 import { FiadoCheckoutModal, CreditAccountsView } from './FiadoComponents';
 
@@ -80,6 +84,7 @@ export default function App() {
   const [expenses, setExpenses] = useState([]);
   const [creditAccounts, setCreditAccounts] = useState([]);
   const [vaultTransactions, setVaultTransactions] = useState([]);
+  const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Controle de Sessão de Login
@@ -227,6 +232,7 @@ export default function App() {
           closures: mergeById(currentDb.closures || [], parsedData.closures || []),
           creditAccounts: mergeById(currentDb.creditAccounts || [], parsedData.creditAccounts || []),
           vaultTransactions: mergeById(currentDb.vaultTransactions || [], parsedData.vaultTransactions || []),
+          bills: mergeById(currentDb.bills || [], parsedData.bills || []),
           syncQueue: currentDb.syncQueue || []
         };
 
@@ -236,6 +242,7 @@ export default function App() {
         setExpenses(updatedDB.expenses);
         setCreditAccounts(updatedDB.creditAccounts);
         setVaultTransactions(updatedDB.vaultTransactions || []);
+        setBills(updatedDB.bills || []);
 
         // Disparar sincronização com Supabase para enviar os novos dados
         await executeSync();
@@ -306,6 +313,7 @@ export default function App() {
       setExpenses(localDb.expenses || []);
       setCreditAccounts(localDb.creditAccounts || []);
       setVaultTransactions(localDb.vaultTransactions || []);
+      setBills(localDb.bills || []);
       setSyncPendingCount(0);
 
       const pendings = await getPendingClosures(getStoreId());
@@ -639,6 +647,76 @@ export default function App() {
     }
   };
 
+  // --- CRUD BOLETOS / CONTAS A PAGAR ---
+  const handleSaveBill = async (billData) => {
+    try {
+      const updatedBills = await saveBill(billData);
+      setBills(updatedBills);
+      showScanNotification("Boleto salvo com sucesso!");
+    } catch (e) {
+      console.error(e);
+      showScanNotification("Erro ao salvar boleto.", "error");
+    }
+  };
+
+  const handleDeleteBill = async (billId) => {
+    if (window.confirm("Deseja excluir este boleto permanentemente?")) {
+      try {
+        const updatedBills = await deleteBill(billId);
+        setBills(updatedBills);
+        showScanNotification("Boleto excluído!");
+      } catch (e) {
+        console.error(e);
+        showScanNotification("Erro ao excluir boleto.", "error");
+      }
+    }
+  };
+
+  const handlePayBill = async (bill, source) => {
+    try {
+      // 1. Cadastrar a despesa real no sistema
+      const expData = {
+        id: `exp-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        description: `Pagto Boleto: ${bill.description}`,
+        amount: bill.amount,
+        category: bill.category || 'Boletos',
+        storeId: storeId,
+        source: source
+      };
+      const updatedExpenses = await saveExpense(expData);
+      setExpenses(updatedExpenses);
+
+      // 2. Se a origem for o Cofre, gerar a retirada
+      if (source === 'Cofre') {
+        const vtData = {
+          id: `vt-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          type: 'withdrawal',
+          amount: bill.amount,
+          description: `Despesa via Cofre: Pagto Boleto ${bill.description}`,
+          storeId: storeId,
+          date: new Date().toISOString().split('T')[0]
+        };
+        const updatedVault = await saveVaultTransaction(vtData);
+        setVaultTransactions(updatedVault);
+      }
+
+      // 3. Atualizar o status do boleto para Pago
+      const updatedBill = {
+        ...bill,
+        status: 'Pago'
+      };
+      const updatedBills = await saveBill(updatedBill);
+      setBills(updatedBills);
+
+      showScanNotification("Boleto baixado com sucesso!");
+    } catch (e) {
+      console.error(e);
+      showScanNotification("Erro ao baixar boleto.", "error");
+    }
+  };
+
   const handleTransferStock = async (productId, fromStore, toStore, amount) => {
     try {
       const db = await loadDB();
@@ -828,6 +906,37 @@ export default function App() {
     }
   });
 
+  // 4. Notificações de Boletos / Despesas Fixas Vencendo/Atrasadas
+  bills.filter(b => b.storeId === storeId && b.status === 'Pendente').forEach(bill => {
+    if (bill.dueDate) {
+      if (bill.dueDate === todayStr) {
+        notifications.push({
+          id: `bill-today-${bill.id}`,
+          type: 'bill_today',
+          icon: <AlertTriangle size={18} style={{ color: 'var(--brand-yellow)' }} />,
+          title: 'Boleto Vence Hoje!',
+          message: `${bill.description} - R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.`,
+          onClick: () => {
+            setActiveTab('admin-bills');
+            setIsNotificationsOpen(false);
+          }
+        });
+      } else if (bill.dueDate < todayStr) {
+        notifications.push({
+          id: `bill-late-${bill.id}`,
+          type: 'bill_late',
+          icon: <AlertTriangle size={18} style={{ color: 'var(--danger)' }} />,
+          title: 'Boleto Atrasado / Vencido',
+          message: `${bill.description} venceu em ${bill.dueDate.split('-').reverse().join('/')} (R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}).`,
+          onClick: () => {
+            setActiveTab('admin-bills');
+            setIsNotificationsOpen(false);
+          }
+        });
+      }
+    }
+  });
+
   const totalSalesValue = filteredSales.reduce((sum, s) => sum + s.totalPrice, 0);
   const totalProfitValue = filteredSales.reduce((sum, s) => sum + s.profit, 0);
   const totalExpensesValue = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
@@ -985,6 +1094,15 @@ export default function App() {
                     Controle do Cofre
                   </button>
                 </li>
+                <li>
+                  <button
+                    className={`submenu-item-btn ${activeTab === 'admin-bills' ? 'active' : ''}`}
+                    onClick={() => { setActiveTab('admin-bills'); setIsMobileMenuOpen(false); }}
+                  >
+                    <FileText size={16} />
+                    Controle de Boletos
+                  </button>
+                </li>
               </ul>
             )}
           </li>
@@ -1109,6 +1227,7 @@ export default function App() {
               {activeTab === 'admin-finance' && 'Administração: Controle Geral & Rede'}
               {activeTab === 'admin-deliveries' && 'Administração: Controle de Entregas'}
               {activeTab === 'admin-vault' && 'Administração: Controle do Cofre'}
+              {activeTab === 'admin-bills' && 'Administração: Controle de Boletos'}
             </h1>
             <span className="header-subtitle">
               {activeTab === 'daily-data' && 'Acompanhamento do faturamento, lucros e despesas de hoje'}
@@ -1120,6 +1239,7 @@ export default function App() {
               {activeTab === 'admin-finance' && 'Controle financeiro consolidado de faturamento, lucros, gráficos e rede ao vivo'}
               {activeTab === 'admin-deliveries' && 'Painel de expedição de pedidos para entrega física e geração de Notas Fiscais'}
               {activeTab === 'admin-vault' && 'Rastreamento de sangrias em dinheiro físico enviadas ou retiradas do cofre seguro'}
+              {activeTab === 'admin-bills' && 'Gerencie despesas fixas agendadas, contas a pagar e alertas de boletos'}
             </span>
           </div>
 
@@ -1299,6 +1419,7 @@ export default function App() {
               vaultTransactions={vaultTransactions}
               storeId={storeId}
               getCashBalanceAtDate={getCashBalanceAtDate}
+              bills={bills}
             />
           )}
 
@@ -1418,6 +1539,16 @@ export default function App() {
               vaultTransactions={vaultTransactions}
               onSaveVaultTransaction={handleSaveVaultTransaction}
               onDeleteVaultTransaction={handleDeleteVaultTransaction}
+              storeId={storeId}
+            />
+          )}
+
+          {activeTab === 'admin-bills' && (
+            <BillsView
+              bills={bills}
+              onSaveBill={handleSaveBill}
+              onDeleteBill={handleDeleteBill}
+              onPayBill={handlePayBill}
               storeId={storeId}
             />
           )}
@@ -3917,7 +4048,7 @@ function DailyDashboardView({ sales, expenses, products, vaultTransactions = [],
 // ==========================================
 // 8. TELA: RELATÓRIOS POR CALENDÁRIO
 // ==========================================
-function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId, getCashBalanceAtDate }) {
+function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId, getCashBalanceAtDate, bills = [] }) {
   const [reportMode, setReportMode] = useState('single'); // 'single' | 'range'
   const [startDate, setStartDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
@@ -3940,6 +4071,10 @@ function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId,
   const dayVaultTransactions = reportMode === 'single'
     ? vaultTransactions.filter(vt => vt.storeId === storeId && vt.date === startDate)
     : vaultTransactions.filter(vt => vt.storeId === storeId && vt.date >= startDate && vt.date <= endDate);
+
+  const periodBills = reportMode === 'single'
+    ? bills.filter(b => b.storeId === storeId && b.dueDate === startDate)
+    : bills.filter(b => b.storeId === storeId && b.dueDate >= startDate && b.dueDate <= endDate);
 
   const totalSales = daySales.reduce((sum, s) => sum + s.totalPrice, 0);
   const totalProfit = daySales.reduce((sum, s) => sum + s.profit, 0);
@@ -4098,6 +4233,7 @@ function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId,
 
             const hasSales = sales.some(s => s.timestamp.split('T')[0] === formattedDate);
             const hasExpenses = expenses.some(e => e.timestamp.split('T')[0] === formattedDate);
+            const hasBills = bills.some(b => b.storeId === storeId && b.dueDate === formattedDate && b.status === 'Pendente');
 
             return (
               <button
@@ -4121,7 +4257,7 @@ function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId,
                 }}
               >
                 {day}
-                {(hasSales || hasExpenses) && (
+                {(hasSales || hasExpenses || hasBills) && (
                   <div style={{
                     display: 'flex',
                     gap: '2px',
@@ -4130,6 +4266,7 @@ function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId,
                   }}>
                     {hasSales && <div style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: isSelected ? '#ffffff' : 'var(--success)' }}></div>}
                     {hasExpenses && <div style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: isSelected ? '#ffffff' : 'var(--danger)' }}></div>}
+                    {hasBills && <div style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: isSelected ? '#ffffff' : 'var(--brand-yellow)' }}></div>}
                   </div>
                 )}
               </button>
@@ -4375,6 +4512,51 @@ function CalendarReportsView({ sales, expenses, vaultTransactions = [], storeId,
                       <td>{exp.category}</td>
                       <td>{exp.description}</td>
                       <td style={{ fontWeight: '700', color: 'var(--danger)' }}>R$ {exp.amount.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        <div className="section-card">
+          <div className="card-header">
+            <h3 className="card-title">Boletos do Período ({periodBills.length})</h3>
+          </div>
+          <div className="table-container" style={{ maxHeight: '180px', overflowY: 'auto' }}>
+            {periodBills.length === 0 ? (
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '14px' }}>Nenhum boleto vencendo neste período.</p>
+            ) : (
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Vencimento</th>
+                    <th>Descrição</th>
+                    <th>Categoria</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: 'right' }}>Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {periodBills.map(bill => (
+                    <tr key={bill.id}>
+                      <td>{new Date(bill.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}</td>
+                      <td style={{ fontWeight: '700' }}>{bill.description}</td>
+                      <td>{bill.category}</td>
+                      <td>
+                        <span className={`badge ${bill.status === 'Pago' ? 'badge-success' : 'badge-danger'}`} style={{
+                          padding: '2px 6px',
+                          fontSize: '10px',
+                          fontWeight: '700',
+                          backgroundColor: bill.status === 'Pago' ? 'var(--success-glow)' : 'rgba(239, 68, 68, 0.1)',
+                          color: bill.status === 'Pago' ? 'var(--success)' : 'var(--danger)',
+                          border: `1px solid ${bill.status === 'Pago' ? 'var(--success)' : 'var(--danger)'}`
+                        }}>
+                          {bill.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: '700', color: 'var(--text-primary)' }}>R$ {bill.amount.toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -6372,6 +6554,348 @@ function ClosureModal({ date, sales, expenses, storeId, vaultTransactions = [], 
           <button onClick={handleSave} className="btn-primary" style={{ padding: '10px 24px', fontWeight: '700' }}>Confirmar Fechamento</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ==========================================
+// COMPONENTE: CONTROLE DE BOLETOS / DESPESAS FIXAS (BILLS)
+// ==========================================
+function BillsView({ bills, onSaveBill, onDeleteBill, onPayBill, storeId }) {
+  const [filterStatus, setFilterStatus] = useState('Pendente'); // 'Pendente' | 'Pago' | 'Todas'
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showPayModal, setShowPayModal] = useState(null); // bill to pay
+
+  // Novos campos do boleto
+  const [description, setDescription] = useState('');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState('Boletos');
+  const [dueDate, setDueDate] = useState(() => new Date().toISOString().split('T')[0]);
+
+  // Campo de quitação
+  const [paySource, setPaySource] = useState('Banco / Pix');
+
+  const filteredBills = bills.filter(b => b.storeId === storeId).filter(b => {
+    const matchesStatus = filterStatus === 'Todas' || b.status === filterStatus;
+    const matchesSearch =
+      b.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (b.category && b.category.toLowerCase().includes(searchTerm.toLowerCase()));
+    return matchesStatus && matchesSearch;
+  });
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const totalPending = bills
+    .filter(b => b.storeId === storeId && b.status === 'Pendente')
+    .reduce((sum, b) => sum + b.amount, 0);
+
+  const totalOverdue = bills
+    .filter(b => b.storeId === storeId && b.status === 'Pendente' && b.dueDate < todayStr)
+    .reduce((sum, b) => sum + b.amount, 0);
+
+  const handleSave = () => {
+    if (!description.trim() || !amount) {
+      alert("Por favor, preencha a descrição e o valor.");
+      return;
+    }
+    const bill = {
+      description,
+      amount: parseFloat(amount) || 0,
+      category,
+      dueDate,
+      status: 'Pendente',
+      storeId
+    };
+    onSaveBill(bill);
+    // Reset form
+    setDescription('');
+    setAmount('');
+    setCategory('Boletos');
+    setDueDate(new Date().toISOString().split('T')[0]);
+    setShowAddModal(false);
+  };
+
+  const handleConfirmPayment = () => {
+    if (!showPayModal) return;
+    onPayBill(showPayModal, paySource);
+    setShowPayModal(null);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      
+      {/* Cards de Resumo */}
+      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+        <div className="stat-card" style={{ flex: '1', minWidth: '220px', display: 'flex', alignItems: 'center', gap: '16px', padding: '20px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+          <div style={{ padding: '12px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', borderRadius: 'var(--radius-md)' }}>
+            <AlertTriangle size={24} />
+          </div>
+          <div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }}>Total Atrasado</div>
+            <strong style={{ fontSize: '22px', color: 'var(--danger)', display: 'block', marginTop: '4px' }}>
+              R$ {totalOverdue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </strong>
+          </div>
+        </div>
+
+        <div className="stat-card" style={{ flex: '1', minWidth: '220px', display: 'flex', alignItems: 'center', gap: '16px', padding: '20px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+          <div style={{ padding: '12px', backgroundColor: 'rgba(243, 180, 29, 0.1)', color: 'var(--brand-yellow)', borderRadius: 'var(--radius-md)' }}>
+            <Calendar size={24} />
+          </div>
+          <div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }}>Total Pendente</div>
+            <strong style={{ fontSize: '22px', color: 'var(--brand-yellow)', display: 'block', marginTop: '4px' }}>
+              R$ {totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </strong>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabela de Controle */}
+      <div className="section-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
+          <h2 className="card-title">
+            <FileText size={20} className="brand-icon" style={{ color: 'var(--primary)' }} />
+            Controle de Boletos & Despesas Fixas
+          </h2>
+
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', flex: '1', justifyContent: 'flex-end', maxWidth: '600px' }}>
+            <div className="input-group" style={{ maxWidth: '240px', width: '100%' }}>
+              <Search className="input-icon" size={18} />
+              <input
+                type="text"
+                className="input-field"
+                style={{ padding: '8px 12px 8px 36px', fontSize: '13px' }}
+                placeholder="Buscar boleto..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '6px', backgroundColor: 'var(--bg-secondary)', padding: '4px', borderRadius: 'var(--radius-md)' }}>
+              {['Pendente', 'Pago', 'Todas'].map(status => (
+                <button
+                  key={status}
+                  onClick={() => setFilterStatus(status)}
+                  className={`tab-btn-pill ${filterStatus === status ? 'active' : ''}`}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: filterStatus === status ? 'var(--primary)' : 'transparent',
+                    color: filterStatus === status ? '#ffffff' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  {status === 'Todas' ? 'Todos' : (status === 'Pendente' ? 'Pendentes' : 'Pagos')}
+                </button>
+              ))}
+            </div>
+
+            <button className="btn-primary" style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px' }} onClick={() => setShowAddModal(true)}>
+              <Plus size={16} /> Agendar Boleto
+            </button>
+          </div>
+        </div>
+
+        <div className="table-container">
+          {filteredBills.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+              <FileText size={40} style={{ opacity: 0.3, marginBottom: '12px' }} />
+              <p>Nenhum boleto encontrado para este filtro.</p>
+            </div>
+          ) : (
+            <table className="custom-table table-responsive">
+              <thead>
+                <tr>
+                  <th>Descrição</th>
+                  <th>Categoria</th>
+                  <th>Vencimento</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Valor</th>
+                  <th style={{ textAlign: 'right' }}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredBills.map(bill => {
+                  const isLate = bill.status === 'Pendente' && bill.dueDate < todayStr;
+                  const formattedDate = bill.dueDate
+                    ? new Date(bill.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')
+                    : 'Não especificada';
+
+                  return (
+                    <tr key={bill.id}>
+                      <td>
+                        <div style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{bill.description}</div>
+                      </td>
+                      <td>
+                        <span style={{ fontSize: '11px', fontWeight: '600', backgroundColor: 'var(--bg-secondary)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
+                          {bill.category}
+                        </span>
+                      </td>
+                      <td style={{ color: isLate ? 'var(--danger)' : 'var(--text-primary)', fontWeight: isLate ? '700' : '500' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {isLate && <AlertTriangle size={14} style={{ color: 'var(--danger)' }} />}
+                          {formattedDate} {isLate && <span style={{ fontSize: '9px', textTransform: 'uppercase', color: 'var(--danger)' }}>(Atrasado)</span>}
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`badge ${bill.status === 'Pago' ? 'badge-success' : 'badge-danger'}`} style={{
+                          padding: '4px 8px',
+                          fontSize: '11px',
+                          fontWeight: '700',
+                          backgroundColor: bill.status === 'Pago' ? 'var(--success-glow)' : 'rgba(239, 68, 68, 0.1)',
+                          color: bill.status === 'Pago' ? 'var(--success)' : 'var(--danger)',
+                          border: `1px solid ${bill.status === 'Pago' ? 'var(--success)' : 'var(--danger)'}`
+                        }}>
+                          {bill.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: '800', fontSize: '14px', color: 'var(--text-primary)' }}>
+                        R$ {bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                          {bill.status === 'Pendente' && (
+                            <button
+                              className="btn-success"
+                              style={{ padding: '6px 12px', fontSize: '11px', backgroundColor: 'var(--success)', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                              onClick={() => setShowPayModal(bill)}
+                            >
+                              Dar Baixa (Pagar)
+                            </button>
+                          )}
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '6px 10px', fontSize: '11px', color: 'var(--danger)', borderColor: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            onClick={() => onDeleteBill(bill.id)}
+                          >
+                            Excluir
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* Modal: Agendar Boleto / Despesa Fixa */}
+      {showAddModal && (
+        <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <div className="modal-content glass-card" style={{ width: '100%', maxWidth: '420px', padding: '24px', borderRadius: 'var(--radius-lg)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', margin: 0 }}>
+                <PlusCircle size={20} className="text-primary" /> Agendar Boleto / Gasto Fixo
+              </h2>
+              <button onClick={() => setShowAddModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={20} /></button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div className="form-group">
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Descrição / Boleto *</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Energia CPFL, Aluguel Galpão"
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Valor (R$) *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Categoria</label>
+                <select value={category} onChange={e => setCategory(e.target.value)} style={{ width: '100%' }}>
+                  <option value="Boletos">Boletos a Pagar</option>
+                  <option value="Aluguel">Aluguel & Condomínio</option>
+                  <option value="Utilidades">Água, Luz e Internet</option>
+                  <option value="Impostos">Impostos & Tributos</option>
+                  <option value="Fornecedores">Fornecedores de Mercadoria</option>
+                  <option value="Salários">Salários & Pro-labore</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Data de Vencimento *</label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={e => setDueDate(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+              <button onClick={() => setShowAddModal(false)} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: '600' }}>Cancelar</button>
+              <button onClick={handleSave} className="btn-primary" style={{ padding: '10px 24px', fontWeight: '700' }}>Salvar Boleto</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirmar Pagamento / Baixa de Boleto */}
+      {showPayModal && (
+        <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <div className="modal-content glass-card" style={{ width: '100%', maxWidth: '420px', padding: '24px', borderRadius: 'var(--radius-lg)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', margin: 0 }}>
+                <CheckCircle size={20} className="text-primary" /> Dar Baixa (Quitar Boleto)
+              </h2>
+              <button onClick={() => setShowPayModal(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={20} /></button>
+            </div>
+
+            <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '16px', borderRadius: 'var(--radius-md)', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Boleto:</span>
+                <span style={{ fontWeight: '700' }}>{showPayModal.description}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Vencimento:</span>
+                <span style={{ fontWeight: '700' }}>{new Date(showPayModal.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', borderTop: '1px solid var(--border-color)', paddingTop: '8px', marginTop: '8px' }}>
+                <span style={{ fontWeight: '800' }}>Valor a Pagar:</span>
+                <span style={{ fontWeight: '800', color: 'var(--primary)' }}>R$ {showPayModal.amount.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600' }}>Origem dos Recursos (De onde sai o dinheiro?)</label>
+              <select value={paySource} onChange={e => setPaySource(e.target.value)} style={{ width: '100%' }}>
+                <option value="Banco / Pix">Banco / Pix (Conta Digital)</option>
+                <option value="Caixa Físico">Caixa Físico (Gaveta do Terminal)</option>
+                <option value="Cofre">Cofre Seguro (Fundo Reserva)</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+              <button onClick={() => setShowPayModal(null)} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: '600' }}>Cancelar</button>
+              <button onClick={handleConfirmPayment} className="btn-primary" style={{ padding: '10px 24px', fontWeight: '700', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}>Confirmar Pagamento</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

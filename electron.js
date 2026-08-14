@@ -111,6 +111,18 @@ function createTables() {
         date TEXT
       )
     `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS bills (
+        id TEXT PRIMARY KEY,
+        description TEXT,
+        amount REAL,
+        category TEXT,
+        dueDate TEXT,
+        status TEXT DEFAULT 'Pendente',
+        storeId TEXT
+      )
+    `);
   });
 }
 

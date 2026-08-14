@@ -118,6 +118,18 @@ export async function initializeNeonTables() {
         date TEXT
       )
     `;
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS bills (
+        id TEXT PRIMARY KEY,
+        description TEXT,
+        amount NUMERIC,
+        category TEXT,
+        due_date TEXT,
+        status TEXT DEFAULT 'Pendente',
+        store_id TEXT
+      )
+    `;
   } catch (err) {
     console.error("Falha ao inicializar tabelas no NeonDB:", err.message);
   }
@@ -127,13 +139,14 @@ export async function initializeNeonTables() {
 export async function loadDB() {
   if (isElectron()) {
     try {
-      const [productsRes, salesRes, expensesRes, closuresRes, accountsRes, vaultRes] = await Promise.all([
+      const [productsRes, salesRes, expensesRes, closuresRes, accountsRes, vaultRes, billsRes] = await Promise.all([
         window.electronAPI.dbAll('SELECT * FROM products ORDER BY name ASC'),
         window.electronAPI.dbAll('SELECT * FROM sales ORDER BY timestamp DESC'),
         window.electronAPI.dbAll('SELECT * FROM expenses ORDER BY timestamp DESC'),
         window.electronAPI.dbAll('SELECT * FROM closures'),
         window.electronAPI.dbAll('SELECT * FROM credit_accounts'),
-        window.electronAPI.dbAll('SELECT * FROM vault_transactions ORDER BY timestamp DESC')
+        window.electronAPI.dbAll('SELECT * FROM vault_transactions ORDER BY timestamp DESC'),
+        window.electronAPI.dbAll('SELECT * FROM bills')
       ]);
 
       const products = (productsRes.success ? productsRes.data : []) || [];
@@ -142,6 +155,7 @@ export async function loadDB() {
       const closures = (closuresRes.success ? closuresRes.data : []) || [];
       const creditAccounts = (accountsRes.success ? accountsRes.data : []) || [];
       const vaultTransactions = (vaultRes.success ? vaultRes.data : []) || [];
+      const bills = (billsRes.success ? billsRes.data : []) || [];
 
       const parsedSales = sales.map(s => ({
         ...s,
@@ -186,7 +200,12 @@ export async function loadDB() {
         })),
         syncQueue: [],
         creditAccounts: parsedAccounts,
-        vaultTransactions: parsedVault
+        vaultTransactions: parsedVault,
+        bills: bills.map(b => ({
+          ...b,
+          amount: parseFloat(b.amount) || 0,
+          synced: true
+        }))
       };
     } catch (e) {
       console.error("Falha ao ler tabelas SQLite nativas", e);
@@ -195,13 +214,14 @@ export async function loadDB() {
     // Modo Navegador/Vercel: lê direto do NeonDB
     try {
       await initializeNeonTables();
-      const [productsRes, salesRes, expensesRes, closuresRes, accountsRes, vaultRes] = await Promise.all([
+      const [productsRes, salesRes, expensesRes, closuresRes, accountsRes, vaultRes, billsRes] = await Promise.all([
         sql`SELECT * FROM products ORDER BY name ASC`,
         sql`SELECT * FROM sales ORDER BY timestamp DESC`,
         sql`SELECT * FROM expenses ORDER BY timestamp DESC`,
         sql`SELECT * FROM closures`,
         sql`SELECT * FROM credit_accounts`,
-        sql`SELECT * FROM vault_transactions ORDER BY timestamp DESC`
+        sql`SELECT * FROM vault_transactions ORDER BY timestamp DESC`,
+        sql`SELECT * FROM bills`
       ]);
 
       const parsedSales = (salesRes || []).map(s => ({
@@ -276,7 +296,17 @@ export async function loadDB() {
         })),
         syncQueue: [],
         creditAccounts: parsedAccounts,
-        vaultTransactions: parsedVault
+        vaultTransactions: parsedVault,
+        bills: (billsRes || []).map(b => ({
+          id: b.id,
+          description: b.description,
+          amount: parseFloat(b.amount) || 0,
+          category: b.category,
+          dueDate: b.due_date,
+          status: b.status || 'Pendente',
+          storeId: b.store_id || 'loja-1',
+          synced: true
+        }))
       };
     } catch (e) {
       console.warn("Falha ao ler dados do NeonDB no navegador, usando LocalStorage como fallback", e);
@@ -627,7 +657,7 @@ export async function updateSaleDeliveryStatus(saleId, status, deliveredAt = nul
   if (isElectron()) {
     const res = await window.electronAPI.dbGet('SELECT deliveryDetails FROM sales WHERE id = ?', [saleId]);
     if (res.success && res.data) {
-      const details = JSON.parse(res.data.deliveryDetails || '{}');
+      const details = safeParseJSON(res.data.deliveryDetails, {});
       details.status = status;
       details.deliveredAt = deliveredAt;
       await window.electronAPI.dbRun('UPDATE sales SET deliveryDetails = ? WHERE id = ?', [JSON.stringify(details), saleId]);
@@ -640,13 +670,13 @@ export async function updateSaleDeliveryStatus(saleId, status, deliveredAt = nul
   try {
     const saleRes = await sql`SELECT delivery_details FROM sales WHERE id = ${saleId}`;
     if (saleRes && saleRes.length > 0) {
-      const details = JSON.parse(saleRes[0].delivery_details || '{}');
+      const details = safeParseJSON(saleRes[0].delivery_details, {});
       details.status = status;
       details.deliveredAt = deliveredAt;
-      await sql`UPDATE sales SET delivery_details = ${JSON.stringify(details)} WHERE id = ${saleId}`;
+      await sql`UPDATE sales SET delivery_details = ${JSON.stringify(details)}::jsonb WHERE id = ${saleId}`;
     }
   } catch (e) {
-    console.error(e);
+    console.error("Erro ao atualizar entrega na nuvem:", e);
   }
   return getSales();
 }
@@ -714,6 +744,70 @@ export async function deleteExpense(id) {
     console.error(e);
   }
   return getExpenses();
+}
+
+// ================== GERENCIAMENTO DE BOLETOS / CONTAS A PAGAR ==================
+
+export async function getBills() {
+  const db = await loadDB();
+  return db.bills || [];
+}
+
+export async function saveBill(bill) {
+  const billId = bill.id ? String(bill.id) : Date.now().toString();
+  const amount = parseFloat(bill.amount) || 0;
+  const storeId = bill.storeId || getStoreId();
+  const status = bill.status || 'Pendente';
+
+  if (isElectron()) {
+    await window.electronAPI.dbRun(
+      `INSERT OR REPLACE INTO bills (id, description, amount, category, dueDate, status, storeId)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [billId, bill.description, amount, bill.category, bill.dueDate, status, storeId]
+    );
+    syncAllToCloud().catch(err => console.warn("Falha ao espelhar boleto:", err));
+    return getBills();
+  }
+
+  // Web
+  try {
+    await sql`
+      INSERT INTO bills (id, description, amount, category, due_date, status, store_id)
+      VALUES (${billId}, ${bill.description}, ${amount}, ${bill.category}, ${bill.dueDate}, ${status}, ${storeId})
+      ON CONFLICT (id) DO UPDATE SET
+        description = EXCLUDED.description,
+        amount = EXCLUDED.amount,
+        category = EXCLUDED.category,
+        due_date = EXCLUDED.due_date,
+        status = EXCLUDED.status,
+        store_id = EXCLUDED.store_id
+    `;
+  } catch (e) {
+    console.error("Erro ao salvar boleto na nuvem:", e);
+  }
+  return getBills();
+}
+
+export async function deleteBill(id) {
+  const billId = String(id);
+  if (isElectron()) {
+    await window.electronAPI.dbRun('DELETE FROM bills WHERE id = ?', [billId]);
+    try {
+      await sql`DELETE FROM bills WHERE id = ${billId}`;
+    } catch (e) {
+      console.warn("Falha ao deletar boleto remoto na exclusão local:", e);
+    }
+    syncAllToCloud().catch(err => console.warn("Falha ao espelhar exclusão de boleto:", err));
+    return getBills();
+  }
+
+  // Web
+  try {
+    await sql`DELETE FROM bills WHERE id = ${billId}`;
+  } catch (e) {
+    console.error("Erro ao deletar boleto na nuvem:", e);
+  }
+  return getBills();
 }
 
 // ================== GESTÃO DE FECHAMENTO DE CAIXA ==================
@@ -803,11 +897,18 @@ export async function saveCreditAccount(account) {
       targetAccount = localAccounts[idx];
     }
   } else {
+    const initialBalance = parseFloat(account.balance) || 0;
     targetAccount = {
       ...account,
       id: Date.now().toString(),
-      balance: 0,
-      history: []
+      balance: initialBalance,
+      history: initialBalance > 0 ? [{
+        id: `init-${Date.now()}`,
+        type: 'debt',
+        amount: initialBalance,
+        description: 'Saldo acumulado inicial cadastrado',
+        timestamp: new Date().toISOString()
+      }] : []
     };
     localAccounts.push(targetAccount);
   }
@@ -947,13 +1048,14 @@ export async function syncAllToCloud() {
     // ========================================================
     // 1. PULL: BAIXAR NOVOS DADOS DA NUVEM PARA O SQLITE LOCAL
     // ========================================================
-    const [cloudProducts, cloudSales, cloudExpenses, cloudClosures, cloudAccounts, cloudVault] = await Promise.all([
+    const [cloudProducts, cloudSales, cloudExpenses, cloudClosures, cloudAccounts, cloudVault, cloudBills] = await Promise.all([
       sql`SELECT * FROM products`,
       sql`SELECT * FROM sales`,
       sql`SELECT * FROM expenses`,
       sql`SELECT * FROM closures`,
       sql`SELECT * FROM credit_accounts`,
-      sql`SELECT * FROM vault_transactions`
+      sql`SELECT * FROM vault_transactions`,
+      sql`SELECT * FROM bills`
     ]);
 
     // Gravar produtos da nuvem no SQLite local
@@ -1064,6 +1166,23 @@ export async function syncAllToCloud() {
       );
     }
 
+    // Gravar boletos da nuvem no SQLite local
+    for (const b of cloudBills || []) {
+      await window.electronAPI.dbRun(
+        `INSERT OR REPLACE INTO bills (id, description, amount, category, dueDate, status, storeId)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          b.id,
+          b.description || '',
+          parseFloat(b.amount) || 0,
+          b.category || '',
+          b.due_date || '',
+          b.status || 'Pendente',
+          b.store_id || 'loja-1'
+        ]
+      );
+    }
+
     // ========================================================
     // 2. PUSH: ENVIAR NOVOS DADOS LOCAIS PARA A NUVEM
     // ========================================================
@@ -1163,6 +1282,21 @@ export async function syncAllToCloud() {
           description = EXCLUDED.description,
           store_id = EXCLUDED.store_id,
           date = EXCLUDED.date
+      `;
+    }
+
+    // Enviar boletos
+    for (const b of localDb.bills || []) {
+      await sql`
+        INSERT INTO bills (id, description, amount, category, due_date, status, store_id)
+        VALUES (${b.id}, ${b.description}, ${b.amount}, ${b.category}, ${b.dueDate}, ${b.status || 'Pendente'}, ${b.storeId})
+        ON CONFLICT (id) DO UPDATE SET
+          description = EXCLUDED.description,
+          amount = EXCLUDED.amount,
+          category = EXCLUDED.category,
+          due_date = EXCLUDED.due_date,
+          status = EXCLUDED.status,
+          store_id = EXCLUDED.store_id
       `;
     }
 
