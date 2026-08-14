@@ -59,9 +59,7 @@ export async function initializeNeonTables() {
     try {
       await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_loja1 INTEGER DEFAULT 0`;
       await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_loja2 INTEGER DEFAULT 0`;
-    } catch (e) {
-      // Colunas já existem
-    }
+    } catch (e) {}
 
     // 2. Tabela de Vendas
     await sql`
@@ -80,9 +78,7 @@ export async function initializeNeonTables() {
 
     try {
       await sql`ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_details TEXT`;
-    } catch (e) {
-      // Coluna já existe
-    }
+    } catch (e) {}
 
     // 3. Tabela de Despesas
     await sql`
@@ -99,9 +95,7 @@ export async function initializeNeonTables() {
 
     try {
       await sql`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'Caixa Físico'`;
-    } catch (e) {
-      // Coluna já existe
-    }
+    } catch (e) {}
 
     // 4. Tabela de Fechamentos de Caixa
     await sql`
@@ -132,9 +126,7 @@ export async function initializeNeonTables() {
 
     try {
       await sql`ALTER TABLE credit_accounts ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'Cliente'`;
-    } catch (e) {
-      // Coluna já existe
-    }
+    } catch (e) {}
 
     // 6. Tabela de Cofre
     await sql`
@@ -377,7 +369,7 @@ export async function loadDB() {
   return dbData;
 }
 
-// Salva o banco de dados completo (Utilizado para imports/backups)
+// Salva o banco de dados completo (Utilizado para imports de backups)
 export async function saveDB(data) {
   if (isElectron()) {
     try {
@@ -395,7 +387,7 @@ export async function saveDB(data) {
           await window.electronAPI.dbRun(
             `INSERT INTO products (id, code, name, description, costPrice, salePrice, stockLoja1, stockLoja2, stock, minStock, category, unit)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [p.id, p.code, p.name, p.description, p.costPrice, p.salePrice, p.stockLoja1, p.stockLoja2, p.stock, p.minStock, p.category, p.unit]
+            [p.id, p.code, p.name, p.description, p.costPrice, p.salePrice, p.stockLoja1 || 0, p.stockLoja2 || 0, p.stock || 0, p.minStock || 0, p.category, p.unit]
           );
         }
       }
@@ -461,31 +453,87 @@ export async function saveDB(data) {
       }
 
       await window.electronAPI.dbRun('COMMIT');
-      localStorage.setItem('novo_lar_db', JSON.stringify(data));
-      
-      // Espelha na nuvem em background
-      syncAllToCloud().catch(err => console.warn("Erro ao sincronizar backup na nuvem:", err));
-      return true;
     } catch (err) {
       console.error('Erro ao salvar no banco SQLite:', err);
       await window.electronAPI.dbRun('ROLLBACK');
     }
-  } else {
-    // Gravação direta na web
-    try {
-      await initializeNeonTables();
-      await sql`DELETE FROM products`;
-      if (data.products) {
-        for (const p of data.products) {
-          await sql`
-            INSERT INTO products (id, code, name, description, cost_price, sale_price, stock_loja1, stock_loja2, stock, min_stock, category, unit, updated_at)
-            VALUES (${p.id}, ${p.code}, ${p.name}, ${p.description}, ${p.costPrice}, ${p.salePrice}, ${p.stockLoja1 || 0}, ${p.stockLoja2 || 0}, ${p.stock}, ${p.minStock}, ${p.category}, ${p.unit}, ${new Date().toISOString()})
-          `;
-        }
+  }
+
+  // Grava também na nuvem NeonDB
+  try {
+    await initializeNeonTables();
+    await sql`DELETE FROM products`;
+    await sql`DELETE FROM sales`;
+    await sql`DELETE FROM expenses`;
+    await sql`DELETE FROM closures`;
+    await sql`DELETE FROM credit_accounts`;
+    await sql`DELETE FROM vault_transactions`;
+    await sql`DELETE FROM bills`;
+
+    if (data.products) {
+      for (const p of data.products) {
+        await sql`
+          INSERT INTO products (id, code, name, description, cost_price, sale_price, stock_loja1, stock_loja2, stock, min_stock, category, unit, updated_at)
+          VALUES (${p.id}, ${p.code || ''}, ${p.name}, ${p.description || ''}, ${p.costPrice || 0}, ${p.salePrice || 0}, ${p.stockLoja1 || 0}, ${p.stockLoja2 || 0}, ${p.stock || 0}, ${p.minStock || 0}, ${p.category || 'Materiais Básicos'}, ${p.unit || 'Unidade'}, ${new Date().toISOString()})
+        `;
       }
-    } catch (err) {
-      console.error("Erro ao gravar dados no NeonDB:", err);
     }
+
+    if (data.sales) {
+      for (const s of data.sales) {
+        await sql`
+          INSERT INTO sales (id, timestamp, total_price, total_cost, profit, payment_method, store_id, items, delivery_details)
+          VALUES (${s.id}, ${s.timestamp}, ${s.totalPrice || 0}, ${s.totalCost || 0}, ${s.profit || 0}, ${s.paymentMethod || ''}, ${s.storeId || 'loja-1'}, ${JSON.stringify(s.items || [])}, ${s.deliveryDetails ? JSON.stringify(s.deliveryDetails) : null})
+        `;
+      }
+    }
+
+    if (data.expenses) {
+      for (const e of data.expenses) {
+        await sql`
+          INSERT INTO expenses (id, timestamp, description, amount, category, store_id, source)
+          VALUES (${e.id}, ${e.timestamp}, ${e.description}, ${e.amount || 0}, ${e.category || ''}, ${e.storeId || 'loja-1'}, ${e.source || 'Caixa Físico'})
+        `;
+      }
+    }
+
+    if (data.closures) {
+      for (const c of data.closures) {
+        await sql`
+          INSERT INTO closures (id, store_id, date, closed_at, expected_cash, actual_cash, difference, observations)
+          VALUES (${c.id}, ${c.storeId || 'loja-1'}, ${c.date}, ${c.closedAt}, ${c.expectedCash || 0}, ${c.actualCash || 0}, ${c.difference || 0}, ${c.observations || ''})
+        `;
+      }
+    }
+
+    if (data.creditAccounts) {
+      for (const ca of data.creditAccounts) {
+        await sql`
+          INSERT INTO credit_accounts (id, name, role, address, phone, balance, history)
+          VALUES (${ca.id}, ${ca.name}, ${ca.role || 'Cliente'}, ${ca.address || ''}, ${ca.phone || ''}, ${ca.balance || 0}, ${JSON.stringify(ca.history || [])})
+        `;
+      }
+    }
+
+    if (data.vaultTransactions) {
+      for (const vt of data.vaultTransactions) {
+        await sql`
+          INSERT INTO vault_transactions (id, timestamp, type, amount, description, store_id, date)
+          VALUES (${vt.id}, ${vt.timestamp}, ${vt.type}, ${vt.amount || 0}, ${vt.description || ''}, ${vt.storeId || 'loja-1'}, ${vt.date})
+        `;
+      }
+    }
+
+    if (data.bills) {
+      for (const b of data.bills) {
+        await sql`
+          INSERT INTO bills (id, description, amount, category, due_date, status, store_id)
+          VALUES (${b.id}, ${b.description}, ${b.amount || 0}, ${b.category || 'Geral'}, ${b.dueDate || ''}, ${b.status || 'Pendente'}, ${b.storeId || 'loja-1'})
+        `;
+      }
+    }
+  } catch (err) {
+    console.error("Erro ao gravar dados no NeonDB:", err);
   }
   
   localStorage.setItem('novo_lar_db', JSON.stringify(data));
@@ -557,35 +605,9 @@ export async function saveProduct(product) {
     if (!res.success) {
       alert("Erro ao salvar produto no SQLite: " + res.error);
     }
-    
-    // PUSH direto para a nuvem
-    try {
-      await initializeNeonTables();
-      await sql`
-        INSERT INTO products (id, code, name, description, cost_price, sale_price, stock_loja1, stock_loja2, stock, min_stock, category, unit, updated_at)
-        VALUES (${formattedLocalProduct.id}, ${formattedLocalProduct.code}, ${formattedLocalProduct.name}, ${formattedLocalProduct.description}, ${formattedLocalProduct.costPrice}, ${formattedLocalProduct.salePrice}, ${formattedLocalProduct.stockLoja1}, ${formattedLocalProduct.stockLoja2}, ${formattedLocalProduct.stock}, ${formattedLocalProduct.minStock}, ${formattedLocalProduct.category}, ${formattedLocalProduct.unit}, ${new Date().toISOString()})
-        ON CONFLICT (id) DO UPDATE SET
-          code = EXCLUDED.code,
-          name = EXCLUDED.name,
-          description = EXCLUDED.description,
-          cost_price = EXCLUDED.cost_price,
-          sale_price = EXCLUDED.sale_price,
-          stock_loja1 = EXCLUDED.stock_loja1,
-          stock_loja2 = EXCLUDED.stock_loja2,
-          stock = EXCLUDED.stock,
-          min_stock = EXCLUDED.min_stock,
-          category = EXCLUDED.category,
-          unit = EXCLUDED.unit,
-          updated_at = EXCLUDED.updated_at
-      `;
-    } catch (err) {
-      console.warn("Falha no push imediato de produto:", err);
-    }
-
-    return getProducts();
   }
 
-  // Web
+  // PUSH direto para a nuvem
   try {
     await initializeNeonTables();
     await sql`
@@ -608,6 +630,7 @@ export async function saveProduct(product) {
   } catch (err) {
     console.error("Erro ao salvar produto na nuvem:", err);
   }
+
   return getProducts();
 }
 
@@ -618,15 +641,8 @@ export async function deleteProduct(id) {
     if (!res.success) {
       alert("Erro ao excluir produto no SQLite: " + res.error);
     }
-    try {
-      await sql`DELETE FROM products WHERE id = ${pId}`;
-    } catch (e) {
-      console.warn("Falha ao deletar produto remoto na exclusão local:", e);
-    }
-    return getProducts();
   }
 
-  // Web
   try {
     await initializeNeonTables();
     await sql`DELETE FROM products WHERE id = ${pId}`;
@@ -697,49 +713,16 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
             'UPDATE products SET stockLoja1 = ?, stockLoja2 = ?, stock = ? WHERE id = ?',
             [stock1, stock2, totalStock, prod.id]
           );
-
-          // PUSH de estoque para a nuvem
-          try {
-            await sql`
-              UPDATE products 
-              SET stock_loja1 = ${stock1}, stock_loja2 = ${stock2}, stock = ${totalStock}, updated_at = ${new Date().toISOString()}
-              WHERE id = ${prod.id}
-            `;
-          } catch (e) {}
         }
       }
       await window.electronAPI.dbRun('COMMIT');
-
-      // PUSH imediato da venda para a nuvem
-      try {
-        await initializeNeonTables();
-        await sql`
-          INSERT INTO sales (id, timestamp, total_price, total_cost, profit, payment_method, store_id, items, delivery_details)
-          VALUES (${saleId}, ${timestamp}, ${finalTotalPrice}, ${totalCost}, ${finalTotalPrice - totalCost}, ${paymentMethod}, ${currentStore}, ${itemsStr}, ${deliveryStr})
-          ON CONFLICT (id) DO UPDATE SET
-            timestamp = EXCLUDED.timestamp,
-            total_price = EXCLUDED.total_price,
-            total_cost = EXCLUDED.total_cost,
-            profit = EXCLUDED.profit,
-            payment_method = EXCLUDED.payment_method,
-            store_id = EXCLUDED.store_id,
-            items = EXCLUDED.items,
-            delivery_details = EXCLUDED.delivery_details
-        `;
-      } catch (e) {
-        console.warn("Falha no push imediato da venda:", e);
-      }
-
     } catch (err) {
       await window.electronAPI.dbRun('ROLLBACK');
       alert("Erro ao gravar venda: " + err.message);
     }
-
-    const freshDb = await loadDB();
-    return { sales: freshDb.sales, products: freshDb.products };
   }
 
-  // Web
+  // Grava também no NeonDB
   try {
     await initializeNeonTables();
     await sql`
@@ -778,6 +761,7 @@ export async function registerSale(saleItems, paymentMethod, deliveryDetails = n
   } catch (e) {
     console.error("Erro ao registrar venda na nuvem:", e);
   }
+
   const freshDb = await loadDB();
   return { sales: freshDb.sales, products: freshDb.products };
 }
@@ -792,19 +776,10 @@ export async function updateSaleDeliveryStatus(saleId, status, deliveredAt = nul
       details.deliveredAt = deliveredAt;
       const detailsStr = JSON.stringify(details);
       await window.electronAPI.dbRun('UPDATE sales SET deliveryDetails = ? WHERE id = ?', [detailsStr, sid]);
-      
-      // PUSH imediato para a nuvem
-      try {
-        await initializeNeonTables();
-        await sql`UPDATE sales SET delivery_details = ${detailsStr} WHERE id = ${sid}`;
-      } catch (err) {
-        console.warn("Falha no espelhamento imediato de entrega:", err);
-      }
     }
-    return getSales();
   }
 
-  // Web
+  // PUSH para a nuvem
   try {
     await initializeNeonTables();
     const saleRes = await sql`SELECT delivery_details FROM sales WHERE id = ${sid}`;
@@ -843,29 +818,9 @@ export async function saveExpense(expense) {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [expId, timestamp, description, amount, category, storeId, source]
     );
-
-    // PUSH direto para a nuvem
-    try {
-      await initializeNeonTables();
-      await sql`
-        INSERT INTO expenses (id, timestamp, description, amount, category, store_id, source)
-        VALUES (${expId}, ${timestamp}, ${description}, ${amount}, ${category}, ${storeId}, ${source})
-        ON CONFLICT (id) DO UPDATE SET
-          timestamp = EXCLUDED.timestamp,
-          description = EXCLUDED.description,
-          amount = EXCLUDED.amount,
-          category = EXCLUDED.category,
-          store_id = EXCLUDED.store_id,
-          source = EXCLUDED.source
-      `;
-    } catch (err) {
-      console.warn("Falha no push imediato de despesa:", err);
-    }
-
-    return getExpenses();
   }
 
-  // Web
+  // PUSH direto para a nuvem
   try {
     await initializeNeonTables();
     await sql`
@@ -879,9 +834,10 @@ export async function saveExpense(expense) {
         store_id = EXCLUDED.store_id,
         source = EXCLUDED.source
     `;
-  } catch (e) {
-    console.error("Erro ao salvar despesa na nuvem:", e);
+  } catch (err) {
+    console.error("Erro ao salvar despesa na nuvem:", err);
   }
+
   return getExpenses();
 }
 
@@ -889,15 +845,8 @@ export async function deleteExpense(id) {
   const expId = String(id);
   if (isElectron()) {
     await window.electronAPI.dbRun('DELETE FROM expenses WHERE id = ?', [expId]);
-    try {
-      await sql`DELETE FROM expenses WHERE id = ${expId}`;
-    } catch (e) {
-      console.warn("Falha ao deletar despesa remota na exclusão local:", e);
-    }
-    return getExpenses();
   }
 
-  // Web
   try {
     await initializeNeonTables();
     await sql`DELETE FROM expenses WHERE id = ${expId}`;
@@ -929,29 +878,9 @@ export async function saveBill(bill) {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [billId, description, amount, category, dueDate, status, storeId]
     );
-
-    // PUSH direto para a nuvem
-    try {
-      await initializeNeonTables();
-      await sql`
-        INSERT INTO bills (id, description, amount, category, due_date, status, store_id)
-        VALUES (${billId}, ${description}, ${amount}, ${category}, ${dueDate}, ${status}, ${storeId})
-        ON CONFLICT (id) DO UPDATE SET
-          description = EXCLUDED.description,
-          amount = EXCLUDED.amount,
-          category = EXCLUDED.category,
-          due_date = EXCLUDED.due_date,
-          status = EXCLUDED.status,
-          store_id = EXCLUDED.store_id
-      `;
-    } catch (err) {
-      console.warn("Falha no push imediato de boleto:", err);
-    }
-
-    return getBills();
   }
 
-  // Web
+  // PUSH direto para a nuvem
   try {
     await initializeNeonTables();
     await sql`
@@ -965,9 +894,10 @@ export async function saveBill(bill) {
         status = EXCLUDED.status,
         store_id = EXCLUDED.store_id
     `;
-  } catch (e) {
-    console.error("Erro ao salvar boleto na nuvem:", e);
+  } catch (err) {
+    console.error("Erro ao salvar boleto na nuvem:", err);
   }
+
   return getBills();
 }
 
@@ -975,15 +905,8 @@ export async function deleteBill(id) {
   const billId = String(id);
   if (isElectron()) {
     await window.electronAPI.dbRun('DELETE FROM bills WHERE id = ?', [billId]);
-    try {
-      await sql`DELETE FROM bills WHERE id = ${billId}`;
-    } catch (e) {
-      console.warn("Falha ao deletar boleto remoto na exclusão local:", e);
-    }
-    return getBills();
   }
 
-  // Web
   try {
     await initializeNeonTables();
     await sql`DELETE FROM bills WHERE id = ${billId}`;
@@ -1016,30 +939,9 @@ export async function saveClosure(closureData) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [closureId, storeId, date, closedAt, expectedCash, actualCash, difference, observations]
     );
-
-    // PUSH direto para a nuvem
-    try {
-      await initializeNeonTables();
-      await sql`
-        INSERT INTO closures (id, store_id, date, closed_at, expected_cash, actual_cash, difference, observations)
-        VALUES (${closureId}, ${storeId}, ${date}, ${closedAt}, ${expectedCash}, ${actualCash}, ${difference}, ${observations})
-        ON CONFLICT (id) DO UPDATE SET
-          store_id = EXCLUDED.store_id,
-          date = EXCLUDED.date,
-          closed_at = EXCLUDED.closed_at,
-          expected_cash = EXCLUDED.expected_cash,
-          actual_cash = EXCLUDED.actual_cash,
-          difference = EXCLUDED.difference,
-          observations = EXCLUDED.observations
-      `;
-    } catch (err) {
-      console.warn("Falha no push imediato de fechamento:", err);
-    }
-
-    return getClosures();
   }
 
-  // Web
+  // PUSH direto para a nuvem
   try {
     await initializeNeonTables();
     await sql`
@@ -1054,9 +956,10 @@ export async function saveClosure(closureData) {
         difference = EXCLUDED.difference,
         observations = EXCLUDED.observations
     `;
-  } catch (e) {
-    console.error("Erro ao salvar fechamento de caixa na nuvem:", e);
+  } catch (err) {
+    console.error("Erro ao salvar fechamento na nuvem:", err);
   }
+
   return getClosures();
 }
 
@@ -1144,29 +1047,9 @@ export async function saveCreditAccount(account) {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [targetAccount.id, targetAccount.name, roleVal, targetAccount.address || '', targetAccount.phone || '', balanceVal, historyStr]
     );
-
-    // PUSH direto para a nuvem
-    try {
-      await initializeNeonTables();
-      await sql`
-        INSERT INTO credit_accounts (id, name, role, address, phone, balance, history)
-        VALUES (${targetAccount.id}, ${targetAccount.name}, ${roleVal}, ${targetAccount.address || ''}, ${targetAccount.phone || ''}, ${balanceVal}, ${historyStr})
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          role = EXCLUDED.role,
-          address = EXCLUDED.address,
-          phone = EXCLUDED.phone,
-          balance = EXCLUDED.balance,
-          history = EXCLUDED.history
-      `;
-    } catch (err) {
-      console.warn("Falha no push imediato de fiado:", err);
-    }
-
-    return getCreditAccounts();
   }
 
-  // Web
+  // PUSH direto para a nuvem
   if (targetAccount) {
     try {
       await initializeNeonTables();
@@ -1202,6 +1085,9 @@ export async function addCreditTransaction(accountId, type, amount, description,
     paymentMethod
   };
 
+  let updatedBalance = 0;
+  let updatedHistory = [];
+
   if (isElectron()) {
     const res = await window.electronAPI.dbGet('SELECT * FROM credit_accounts WHERE id = ?', [accountId]);
     if (res.success && res.data) {
@@ -1216,29 +1102,19 @@ export async function addCreditTransaction(accountId, type, amount, description,
         balance -= transaction.amount;
       }
 
+      updatedBalance = balance;
+      updatedHistory = history;
+
       const historyStr = JSON.stringify(history);
 
       await window.electronAPI.dbRun(
         'UPDATE credit_accounts SET balance = ?, history = ? WHERE id = ?',
         [balance, historyStr, accountId]
       );
-
-      // PUSH direto para a nuvem
-      try {
-        await initializeNeonTables();
-        await sql`
-          UPDATE credit_accounts 
-          SET balance = ${balance}, history = ${historyStr} 
-          WHERE id = ${accountId}
-        `;
-      } catch (err) {
-        console.warn("Falha no push imediato de transação de fiado:", err);
-      }
     }
-    return getCreditAccounts();
   }
 
-  // Web
+  // PUSH direto para a nuvem
   try {
     await initializeNeonTables();
     const accRes = await sql`SELECT * FROM credit_accounts WHERE id = ${accountId}`;
@@ -1270,24 +1146,35 @@ export async function addCreditTransaction(accountId, type, amount, description,
 // Apaga TODOS os dados locais e remotos
 export async function clearAllDatabase() {
   if (isElectron()) {
-    await window.electronAPI.dbRun('DELETE FROM products');
-    await window.electronAPI.dbRun('DELETE FROM sales');
-    await window.electronAPI.dbRun('DELETE FROM expenses');
-    await window.electronAPI.dbRun('DELETE FROM closures');
-    await window.electronAPI.dbRun('DELETE FROM credit_accounts');
-    await window.electronAPI.dbRun('DELETE FROM vault_transactions');
-    await window.electronAPI.dbRun('DELETE FROM bills');
+    try {
+      await window.electronAPI.dbRun('BEGIN TRANSACTION');
+      await window.electronAPI.dbRun('DELETE FROM products');
+      await window.electronAPI.dbRun('DELETE FROM sales');
+      await window.electronAPI.dbRun('DELETE FROM expenses');
+      await window.electronAPI.dbRun('DELETE FROM closures');
+      await window.electronAPI.dbRun('DELETE FROM credit_accounts');
+      await window.electronAPI.dbRun('DELETE FROM vault_transactions');
+      await window.electronAPI.dbRun('DELETE FROM bills');
+      await window.electronAPI.dbRun('COMMIT');
+    } catch (err) {
+      try {
+        await window.electronAPI.dbRun('ROLLBACK');
+      } catch (rb) {}
+      console.error("Erro ao limpar SQLite local:", err);
+    }
   }
 
   try {
     await initializeNeonTables();
-    await sql`DELETE FROM products`;
-    await sql`DELETE FROM sales`;
-    await sql`DELETE FROM expenses`;
-    await sql`DELETE FROM closures`;
-    await sql`DELETE FROM credit_accounts`;
-    await sql`DELETE FROM vault_transactions`;
-    await sql`DELETE FROM bills`;
+    await Promise.all([
+      sql`DELETE FROM products`,
+      sql`DELETE FROM sales`,
+      sql`DELETE FROM expenses`,
+      sql`DELETE FROM closures`,
+      sql`DELETE FROM credit_accounts`,
+      sql`DELETE FROM vault_transactions`,
+      sql`DELETE FROM bills`
+    ]);
   } catch (e) {
     console.warn("Erro ao limpar nuvem:", e);
   }
@@ -1303,7 +1190,10 @@ export async function clearAllDatabase() {
     bills: []
   };
 
-  await saveDB(emptyDb);
+  try {
+    localStorage.setItem('novo_lar_db', JSON.stringify(emptyDb));
+  } catch (e) {}
+
   return emptyDb;
 }
 
@@ -1318,7 +1208,7 @@ export async function syncAllToCloud() {
     await initializeNeonTables();
 
     // ========================================================
-    // 1. PULL: BAIXAR DADOS ATUALIZADOS DA NUVEM PARA O SQLITE LOCAL
+    // PULL & MIRROR: SINCRONIZAR SQLITE COM A NUVEM
     // ========================================================
     const [cloudProducts, cloudSales, cloudExpenses, cloudClosures, cloudAccounts, cloudVault, cloudBills] = await Promise.all([
       sql`SELECT * FROM products`,
@@ -1330,14 +1220,17 @@ export async function syncAllToCloud() {
       sql`SELECT * FROM bills`
     ]);
 
-    // Gravar produtos da nuvem no SQLite local
+    await window.electronAPI.dbRun('BEGIN TRANSACTION');
+
+    // 1. Substituir produtos
+    await window.electronAPI.dbRun('DELETE FROM products');
     for (const p of cloudProducts || []) {
       const s1 = parseInt(p.stock_loja1) || 0;
       const s2 = parseInt(p.stock_loja2) || 0;
       const total = (s1 + s2 > 0) ? (s1 + s2) : (parseInt(p.stock) || 0);
 
       await window.electronAPI.dbRun(
-        `INSERT OR REPLACE INTO products (id, code, name, description, costPrice, salePrice, stockLoja1, stockLoja2, stock, minStock, category, unit)
+        `INSERT INTO products (id, code, name, description, costPrice, salePrice, stockLoja1, stockLoja2, stock, minStock, category, unit)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           p.id,
@@ -1356,10 +1249,11 @@ export async function syncAllToCloud() {
       );
     }
 
-    // Gravar vendas da nuvem no SQLite local
+    // 2. Substituir vendas
+    await window.electronAPI.dbRun('DELETE FROM sales');
     for (const s of cloudSales || []) {
       await window.electronAPI.dbRun(
-        `INSERT OR REPLACE INTO sales (id, timestamp, totalPrice, totalCost, profit, paymentMethod, storeId, items, deliveryDetails)
+        `INSERT INTO sales (id, timestamp, totalPrice, totalCost, profit, paymentMethod, storeId, items, deliveryDetails)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           s.id,
@@ -1375,10 +1269,11 @@ export async function syncAllToCloud() {
       );
     }
 
-    // Gravar despesas da nuvem no SQLite local
+    // 3. Substituir despesas
+    await window.electronAPI.dbRun('DELETE FROM expenses');
     for (const e of cloudExpenses || []) {
       await window.electronAPI.dbRun(
-        `INSERT OR REPLACE INTO expenses (id, timestamp, description, amount, category, storeId, source)
+        `INSERT INTO expenses (id, timestamp, description, amount, category, storeId, source)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           e.id,
@@ -1392,10 +1287,11 @@ export async function syncAllToCloud() {
       );
     }
 
-    // Gravar fechamentos da nuvem no SQLite local
+    // 4. Substituir fechamentos
+    await window.electronAPI.dbRun('DELETE FROM closures');
     for (const c of cloudClosures || []) {
       await window.electronAPI.dbRun(
-        `INSERT OR REPLACE INTO closures (id, storeId, date, closedAt, expectedCash, actualCash, difference, observations)
+        `INSERT INTO closures (id, storeId, date, closedAt, expectedCash, actualCash, difference, observations)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           c.id,
@@ -1410,10 +1306,11 @@ export async function syncAllToCloud() {
       );
     }
 
-    // Gravar fiados da nuvem no SQLite local
+    // 5. Substituir fiados
+    await window.electronAPI.dbRun('DELETE FROM credit_accounts');
     for (const ca of cloudAccounts || []) {
       await window.electronAPI.dbRun(
-        `INSERT OR REPLACE INTO credit_accounts (id, name, role, address, phone, balance, history)
+        `INSERT INTO credit_accounts (id, name, role, address, phone, balance, history)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           ca.id,
@@ -1427,10 +1324,11 @@ export async function syncAllToCloud() {
       );
     }
 
-    // Gravar transações de cofre da nuvem no SQLite local
+    // 6. Substituir transações do cofre
+    await window.electronAPI.dbRun('DELETE FROM vault_transactions');
     for (const vt of cloudVault || []) {
       await window.electronAPI.dbRun(
-        `INSERT OR REPLACE INTO vault_transactions (id, timestamp, type, amount, description, storeId, date)
+        `INSERT INTO vault_transactions (id, timestamp, type, amount, description, storeId, date)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           vt.id,
@@ -1444,10 +1342,11 @@ export async function syncAllToCloud() {
       );
     }
 
-    // Gravar boletos da nuvem no SQLite local
+    // 7. Substituir boletos
+    await window.electronAPI.dbRun('DELETE FROM bills');
     for (const b of cloudBills || []) {
       await window.electronAPI.dbRun(
-        `INSERT OR REPLACE INTO bills (id, description, amount, category, dueDate, status, storeId)
+        `INSERT INTO bills (id, description, amount, category, dueDate, status, storeId)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           b.id,
@@ -1461,136 +1360,15 @@ export async function syncAllToCloud() {
       );
     }
 
-    // ========================================================
-    // 2. PUSH: ENVIAR DADOS LOCAIS DO SQLITE PARA A NUVEM
-    // ========================================================
-    const localDb = await loadDB();
-
-    // Enviar produtos
-    for (const p of localDb.products || []) {
-      const s1 = parseInt(p.stockLoja1) || 0;
-      const s2 = parseInt(p.stockLoja2) || 0;
-      const totalStock = (s1 + s2 > 0) ? (s1 + s2) : (parseInt(p.stock) || 0);
-
-      await sql`
-        INSERT INTO products (id, code, name, description, cost_price, sale_price, stock_loja1, stock_loja2, stock, min_stock, category, unit, updated_at)
-        VALUES (${p.id}, ${p.code || ''}, ${p.name}, ${p.description || ''}, ${p.costPrice}, ${p.salePrice}, ${s1}, ${s2}, ${totalStock}, ${p.minStock}, ${p.category || 'Materiais Básicos'}, ${p.unit || 'Unidade'}, ${new Date().toISOString()})
-        ON CONFLICT (id) DO UPDATE SET
-          code = EXCLUDED.code,
-          name = EXCLUDED.name,
-          description = EXCLUDED.description,
-          cost_price = EXCLUDED.cost_price,
-          sale_price = EXCLUDED.sale_price,
-          stock_loja1 = EXCLUDED.stock_loja1,
-          stock_loja2 = EXCLUDED.stock_loja2,
-          stock = EXCLUDED.stock,
-          min_stock = EXCLUDED.min_stock,
-          category = EXCLUDED.category,
-          unit = EXCLUDED.unit,
-          updated_at = EXCLUDED.updated_at
-      `;
-    }
-
-    // Enviar vendas
-    for (const s of localDb.sales || []) {
-      const itemsStr = typeof s.items === 'string' ? s.items : JSON.stringify(s.items || []);
-      const deliveryStr = s.deliveryDetails ? (typeof s.deliveryDetails === 'string' ? s.deliveryDetails : JSON.stringify(s.deliveryDetails)) : null;
-
-      await sql`
-        INSERT INTO sales (id, timestamp, total_price, total_cost, profit, payment_method, store_id, items, delivery_details)
-        VALUES (${s.id}, ${s.timestamp}, ${s.totalPrice}, ${s.totalCost}, ${s.profit}, ${s.paymentMethod}, ${s.storeId || 'loja-1'}, ${itemsStr}, ${deliveryStr})
-        ON CONFLICT (id) DO UPDATE SET
-          timestamp = EXCLUDED.timestamp,
-          total_price = EXCLUDED.total_price,
-          total_cost = EXCLUDED.total_cost,
-          profit = EXCLUDED.profit,
-          payment_method = EXCLUDED.payment_method,
-          store_id = EXCLUDED.store_id,
-          items = EXCLUDED.items,
-          delivery_details = EXCLUDED.delivery_details
-      `;
-    }
-
-    // Enviar despesas
-    for (const e of localDb.expenses || []) {
-      await sql`
-        INSERT INTO expenses (id, timestamp, description, amount, category, store_id, source)
-        VALUES (${e.id}, ${e.timestamp}, ${e.description}, ${e.amount}, ${e.category}, ${e.storeId || 'loja-1'}, ${e.source || 'Caixa Físico'})
-        ON CONFLICT (id) DO UPDATE SET
-          timestamp = EXCLUDED.timestamp,
-          description = EXCLUDED.description,
-          amount = EXCLUDED.amount,
-          category = EXCLUDED.category,
-          store_id = EXCLUDED.store_id,
-          source = EXCLUDED.source
-      `;
-    }
-
-    // Enviar fechamentos
-    for (const c of localDb.closures || []) {
-      await sql`
-        INSERT INTO closures (id, store_id, date, closed_at, expected_cash, actual_cash, difference, observations)
-        VALUES (${c.id}, ${c.storeId || 'loja-1'}, ${c.date}, ${c.closedAt}, ${c.expectedCash}, ${c.actualCash}, ${c.difference}, ${c.observations || ''})
-        ON CONFLICT (id) DO UPDATE SET
-          store_id = EXCLUDED.store_id,
-          date = EXCLUDED.date,
-          closed_at = EXCLUDED.closed_at,
-          expected_cash = EXCLUDED.expected_cash,
-          actual_cash = EXCLUDED.actual_cash,
-          difference = EXCLUDED.difference,
-          observations = EXCLUDED.observations
-      `;
-    }
-
-    // Enviar fiados
-    for (const ca of localDb.creditAccounts || []) {
-      const histStr = typeof ca.history === 'string' ? ca.history : JSON.stringify(ca.history || []);
-      await sql`
-        INSERT INTO credit_accounts (id, name, role, address, phone, balance, history)
-        VALUES (${ca.id}, ${ca.name}, ${ca.role || 'Cliente'}, ${ca.address || ''}, ${ca.phone || ''}, ${ca.balance}, ${histStr})
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          role = EXCLUDED.role,
-          address = EXCLUDED.address,
-          phone = EXCLUDED.phone,
-          balance = EXCLUDED.balance,
-          history = EXCLUDED.history
-      `;
-    }
-
-    // Enviar transações do cofre
-    for (const vt of localDb.vaultTransactions || []) {
-      await sql`
-        INSERT INTO vault_transactions (id, timestamp, type, amount, description, store_id, date)
-        VALUES (${vt.id}, ${vt.timestamp}, ${vt.type}, ${vt.amount}, ${vt.description || ''}, ${vt.storeId || 'loja-1'}, ${vt.date})
-        ON CONFLICT (id) DO UPDATE SET
-          timestamp = EXCLUDED.timestamp,
-          type = EXCLUDED.type,
-          amount = EXCLUDED.amount,
-          description = EXCLUDED.description,
-          store_id = EXCLUDED.store_id,
-          date = EXCLUDED.date
-      `;
-    }
-
-    // Enviar boletos
-    for (const b of localDb.bills || []) {
-      await sql`
-        INSERT INTO bills (id, description, amount, category, due_date, status, store_id)
-        VALUES (${b.id}, ${b.description}, ${b.amount}, ${b.category || 'Geral'}, ${b.dueDate || ''}, ${b.status || 'Pendente'}, ${b.storeId || 'loja-1'})
-        ON CONFLICT (id) DO UPDATE SET
-          description = EXCLUDED.description,
-          amount = EXCLUDED.amount,
-          category = EXCLUDED.category,
-          due_date = EXCLUDED.due_date,
-          status = EXCLUDED.status,
-          store_id = EXCLUDED.store_id
-      `;
-    }
-
-    return { success: true, data: localDb };
+    await window.electronAPI.dbRun('COMMIT');
+    return { success: true };
   } catch (err) {
-    console.error("Erro durante o espelhamento das Tabelas:", err.message);
+    if (isElectron()) {
+      try {
+        await window.electronAPI.dbRun('ROLLBACK');
+      } catch (rb) {}
+    }
+    console.error("Erro durante a sincronização com o NeonDB:", err.message);
     return { success: false, error: err.message };
   }
 }
@@ -1633,29 +1411,9 @@ export async function saveVaultTransaction(vt) {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [vtId, timestamp, type, amount, description, storeId, date]
     );
-
-    // PUSH direto para a nuvem
-    try {
-      await initializeNeonTables();
-      await sql`
-        INSERT INTO vault_transactions (id, timestamp, type, amount, description, store_id, date)
-        VALUES (${vtId}, ${timestamp}, ${type}, ${amount}, ${description}, ${storeId}, ${date})
-        ON CONFLICT (id) DO UPDATE SET
-          timestamp = EXCLUDED.timestamp,
-          type = EXCLUDED.type,
-          amount = EXCLUDED.amount,
-          description = EXCLUDED.description,
-          store_id = EXCLUDED.store_id,
-          date = EXCLUDED.date
-      `;
-    } catch (err) {
-      console.warn("Falha no push imediato de cofre:", err);
-    }
-
-    return getVaultTransactions();
   }
 
-  // Web
+  // PUSH direto para a nuvem
   try {
     await initializeNeonTables();
     await sql`
@@ -1672,6 +1430,7 @@ export async function saveVaultTransaction(vt) {
   } catch (err) {
     console.error("Erro ao gravar transação de cofre no NeonDB:", err);
   }
+
   return getVaultTransactions();
 }
 
@@ -1679,15 +1438,8 @@ export async function deleteVaultTransaction(id) {
   const vtId = String(id);
   if (isElectron()) {
     await window.electronAPI.dbRun('DELETE FROM vault_transactions WHERE id = ?', [vtId]);
-    try {
-      await sql`DELETE FROM vault_transactions WHERE id = ${vtId}`;
-    } catch (e) {
-      console.warn("Falha ao deletar transação de cofre remota na exclusão local:", e);
-    }
-    return getVaultTransactions();
   }
 
-  // Web
   try {
     await initializeNeonTables();
     await sql`DELETE FROM vault_transactions WHERE id = ${vtId}`;

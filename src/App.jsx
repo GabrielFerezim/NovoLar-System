@@ -260,10 +260,16 @@ export default function App() {
     fileReader.readAsText(file);
   };
 
-  const handleResetAllData = async () => {
-    const confirmText = prompt("ATENÇÃO EXTREMA: Isso irá apagar PERMANENTEMENTE todos os dados (produtos, vendas, despesas, fiados e fechamentos) locais e na nuvem.\n\nPara confirmar, digite APAGAR TUDO em maiúsculas:");
-    if (confirmText !== 'APAGAR TUDO') {
-      alert('Operação cancelada ou texto incorreto.');
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetConfirmInput, setResetConfirmInput] = useState('');
+
+  const handleResetAllData = () => {
+    setResetConfirmInput('');
+    setResetModalOpen(true);
+  };
+
+  const confirmResetAllData = async () => {
+    if (resetConfirmInput.trim() !== 'APAGAR TUDO') {
       return;
     }
 
@@ -277,16 +283,19 @@ export default function App() {
       setExpenses([]);
       setCreditAccounts([]);
       setVaultTransactions([]);
+      setBills([]);
+      setPendingClosures([]);
       setSyncPendingCount(0);
+      setResetModalOpen(false);
+      setResetConfirmInput('');
 
-      alert('Tudo limpo! Todo o sistema e a nuvem foram zerados com sucesso.');
+      showScanNotification('Tudo limpo! Todo o sistema e a nuvem foram zerados com sucesso.', 'success');
     } catch (err) {
       alert('Erro ao resetar o sistema: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
-
 
   // Status do Scanner Global
   const [scannerActive, setScannerActive] = useState(true);
@@ -1645,6 +1654,75 @@ export default function App() {
           onClose={() => { setClosureModalOpen(false); setClosureTargetDate(null); }}
           onSave={handleClosure}
         />
+      )}
+
+      {/* MODAL DE CONFIRMAÇÃO PARA ZERAR BANCO DE DADOS */}
+      {resetModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content glass-card" style={{ maxWidth: '480px', padding: '24px', animation: 'fadeIn 0.2s ease-out' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: 'var(--danger, #dc2626)', marginBottom: '16px' }}>
+              <AlertTriangle size={30} />
+              <h2 style={{ fontSize: '18px', fontWeight: '800', margin: 0 }}>Zerar Todo o Sistema e Nuvem</h2>
+            </div>
+            
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '14px' }}>
+              <strong>ATENÇÃO EXTREMA:</strong> Esta ação apagará <strong style={{ color: 'var(--danger, #dc2626)' }}>PERMANENTEMENTE</strong> todos os dados cadastrados (produtos, vendas, despesas, fiados, boletos, fechamentos e movimentações de cofre) tanto localmente quanto no banco em nuvem Neon.
+            </p>
+
+            <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', marginBottom: '16px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', display: 'block', marginBottom: '6px' }}>
+                Para confirmar a exclusão total, digite exatamente:
+              </label>
+              <div style={{ fontSize: '14px', fontWeight: '900', color: 'var(--danger, #dc2626)', letterSpacing: '1px', marginBottom: '8px' }}>
+                APAGAR TUDO
+              </div>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="Digite APAGAR TUDO"
+                value={resetConfirmInput}
+                onChange={(e) => setResetConfirmInput(e.target.value.toUpperCase())}
+                style={{ width: '100%', padding: '10px 14px', fontSize: '13px', fontWeight: '700' }}
+                autoFocus
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ padding: '10px 18px', fontSize: '13px', fontWeight: '600' }}
+                onClick={() => { setResetModalOpen(false); setResetConfirmInput(''); }}
+                disabled={loading}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                style={{
+                  padding: '10px 20px',
+                  fontSize: '13px',
+                  fontWeight: '700',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  backgroundColor: resetConfirmInput.trim() === 'APAGAR TUDO' ? 'var(--danger, #dc2626)' : 'var(--text-muted)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  cursor: resetConfirmInput.trim() === 'APAGAR TUDO' ? 'pointer' : 'not-allowed',
+                  opacity: resetConfirmInput.trim() === 'APAGAR TUDO' ? 1 : 0.6
+                }}
+                disabled={resetConfirmInput.trim() !== 'APAGAR TUDO' || loading}
+                onClick={confirmResetAllData}
+              >
+                <Trash2 size={16} />
+                {loading ? 'Apagando...' : 'Confirmar e Zerar Tudo'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

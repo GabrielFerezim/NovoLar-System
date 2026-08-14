@@ -1811,17 +1811,111 @@ body {
 }
 
 /* ==========================================================================
-   RESPONSIVIDADE MOBILE COMPLETA (Telas <= 768px)
+   RESPONSIVIDADE COMPLETA MULTI-DISPOSITIVO (Desktop, Laptops, Tablets, Mobile)
    ========================================================================== */
 
-/* Rolagem Horizontal de Tabelas */
+/* Rolagem Horizontal e Estrutura de Tabelas */
+.table-container,
 .table-responsive,
 .cart-table-wrapper {
   width: 100%;
-  overflow-x: auto;
+  overflow-x: auto !important;
   -webkit-overflow-scrolling: touch;
 }
 
+.custom-table {
+  min-width: 600px;
+}
+
+.custom-table.compact-table {
+  min-width: 450px;
+}
+
+/* Modais Universais Responsivos */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 580px;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Telas Médias / Laptops Compactos (<= 1200px) */
+@media (max-width: 1200px) {
+  .pdv-layout {
+    grid-template-columns: 1fr 360px;
+    gap: 16px;
+  }
+
+  .dashboard-summary-grid {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 16px;
+  }
+
+  .dashboard-details-grid {
+    grid-template-columns: 1.2fr 1fr;
+    gap: 16px;
+  }
+}
+
+/* Tablets e Laptops Pequenos (<= 1024px) */
+@media (max-width: 1024px) {
+  .top-header {
+    padding: 0 20px;
+    height: 65px;
+  }
+
+  .page-container {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .dashboard-details-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pdv-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+    gap: 20px;
+  }
+
+  .pdv-left-panel,
+  .pdv-right-panel {
+    height: auto;
+    overflow: visible;
+  }
+
+  .cart-table-wrapper {
+    max-height: 380px;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Tablets e Smartphones (<= 768px) */
 @media (max-width: 768px) {
   /* Hambúrguer e Menu Mobile */
   .mobile-menu-toggle {
@@ -1831,28 +1925,38 @@ body {
   .sidebar {
     position: fixed;
     top: 0;
-    left: -270px;
+    left: -280px;
     bottom: 0;
-    z-index: 1000;
+    z-index: 1200;
+    width: 280px;
     height: 100vh;
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 4px 0 15px rgba(0, 0, 0, 0.1);
+    box-shadow: 4px 0 25px rgba(0, 0, 0, 0.2);
   }
 
   .sidebar.mobile-open {
-    transform: translateX(270px);
+    transform: translateX(280px);
   }
 
   /* Contêiner de Layout App */
   .app-container {
     flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .main-content {
+    height: calc(100vh - 60px);
+    height: calc(100dvh - 60px);
+    overflow: hidden;
   }
 
   /* Ajustes do Cabeçalho Superior */
   .top-header {
     height: 60px;
-    padding: 0 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    padding: 0 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   }
 
   .header-title {
@@ -1860,7 +1964,7 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 180px;
+    max-width: 160px;
   }
 
   .header-subtitle {
@@ -1883,17 +1987,42 @@ body {
   /* Contêiner das Páginas */
   .page-container {
     padding: 12px;
-    gap: 16px;
+    gap: 14px;
     overflow-y: auto;
-    height: calc(100vh - 60px);
+    height: 100%;
+    -webkit-overflow-scrolling: touch;
   }
 
-  /* PDV Responsivo */
+  /* KPI Grid */
+  .dashboard-summary-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .kpi-card {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .kpi-icon-wrapper {
+    width: 38px;
+    height: 38px;
+  }
+
+  .kpi-label {
+    font-size: 11px;
+  }
+
+  .kpi-value {
+    font-size: 17px;
+  }
+
+  /* PDV Mobile */
   .pdv-layout {
     grid-template-columns: 1fr !important;
     height: auto !important;
     overflow: visible !important;
-    gap: 16px;
+    gap: 14px;
   }
 
   .pdv-left-panel {
@@ -1907,7 +2036,7 @@ body {
   }
 
   .cart-table-wrapper {
-    max-height: 350px;
+    max-height: 280px;
   }
 
   /* Grid do Diagnóstico Comercial da IA */
@@ -1929,7 +2058,51 @@ body {
   }
 
   .ai-chat-card {
-    height: 480px !important;
+    height: 440px !important;
+  }
+
+  /* Formulários e Modais Mobile */
+  .form-row {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+
+  .modal-overlay {
+    padding: 8px;
+  }
+
+  .modal-content {
+    max-height: 94vh;
+    border-radius: var(--radius-md);
+  }
+
+  .section-card {
+    padding: 16px;
+    gap: 12px;
+  }
+}
+
+/* Telas Pequenas / Smartphones (<= 480px) */
+@media (max-width: 480px) {
+  .dashboard-summary-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .header-title {
+    max-width: 120px;
+    font-size: 14px;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger {
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  .modal-content {
+    padding: 16px !important;
   }
 }
 
