@@ -93,12 +93,17 @@ function createTables() {
       CREATE TABLE IF NOT EXISTS credit_accounts (
         id TEXT PRIMARY KEY,
         name TEXT,
+        role TEXT DEFAULT 'Cliente',
         address TEXT,
         phone TEXT,
         balance REAL,
         history TEXT
       )
     `);
+
+    db.run("ALTER TABLE credit_accounts ADD COLUMN role TEXT DEFAULT 'Cliente'", (err) => {
+      // Ignorar erro se a coluna já existir
+    });
 
     db.run(`
       CREATE TABLE IF NOT EXISTS vault_transactions (

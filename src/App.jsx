@@ -65,7 +65,8 @@ import {
   deleteVaultTransaction,
   getBills,
   saveBill,
-  deleteBill
+  deleteBill,
+  isElectron
 } from './db';
 import { FiadoCheckoutModal, CreditAccountsView } from './FiadoComponents';
 
@@ -306,7 +307,7 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // O App carrega os dados locais
+      // Carrega dados
       const localDb = await loadDB();
       setProducts(localDb.products || []);
       setSales(localDb.sales || []);
@@ -320,24 +321,50 @@ export default function App() {
       setPendingClosures(pendings);
 
       // Dispara o espelhamento em background inicial
-      executeSync();
+      await executeSync();
     } catch (error) {
-      console.error("Erro ao carregar dados locais:", error);
+      console.error("Erro ao carregar dados:", error);
     } finally {
       setLoading(false);
     }
   };
 
   const executeSync = async () => {
-    setSyncStatus('Espelhando...');
     try {
-      const res = await runBackgroundSync();
-      if (res.status === 'success') {
-        setSyncStatus('Sincronizado');
+      if (isElectron()) {
+        setSyncStatus('Espelhando...');
+        const res = await runBackgroundSync();
+        if (res.status === 'success') {
+          setSyncStatus('Sincronizado');
+          // Atualiza estado do React com os dados mais recentes pós-sync
+          const freshDb = await loadDB();
+          setProducts(freshDb.products || []);
+          setSales(freshDb.sales || []);
+          setExpenses(freshDb.expenses || []);
+          setCreditAccounts(freshDb.creditAccounts || []);
+          setVaultTransactions(freshDb.vaultTransactions || []);
+          setBills(freshDb.bills || []);
+          const pendings = await getPendingClosures(getStoreId());
+          setPendingClosures(pendings);
+        } else {
+          setSyncStatus('Offline');
+        }
       } else {
-        setSyncStatus('Offline');
+        // Modo Web: busca os dados mais recentes do NeonDB
+        setSyncStatus('Sincronizando...');
+        const freshDb = await loadDB();
+        setProducts(freshDb.products || []);
+        setSales(freshDb.sales || []);
+        setExpenses(freshDb.expenses || []);
+        setCreditAccounts(freshDb.creditAccounts || []);
+        setVaultTransactions(freshDb.vaultTransactions || []);
+        setBills(freshDb.bills || []);
+        const pendings = await getPendingClosures(getStoreId());
+        setPendingClosures(pendings);
+        setSyncStatus('Sincronizado');
       }
     } catch (e) {
+      console.warn("Erro no ciclo de sincronização:", e);
       setSyncStatus('Offline');
     }
   };
@@ -347,10 +374,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Sincronização/espelhamento em background a cada 30 segundos
+    // Sincronização/espelhamento em tempo real a cada 10 segundos
     const timer = setInterval(() => {
       executeSync();
-    }, 30000);
+    }, 10000);
     return () => clearInterval(timer);
   }, []);
 
@@ -1121,7 +1148,7 @@ export default function App() {
                   }}
                 ></div>
                 <span style={{ fontWeight: '600', fontSize: '12px' }}>
-                  Banco Local Ativo
+                  {isElectron() ? 'App Desktop Conectado' : 'Web Online Conectado'}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '11px', color: 'var(--text-secondary)' }}>
