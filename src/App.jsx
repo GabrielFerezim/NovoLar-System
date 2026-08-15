@@ -1384,8 +1384,9 @@ export default function App() {
                 {storeId === 'loja-1' ? 'Loja 1 - Matriz' : 'Loja 2 - Filial'}
               </div>
               <a
-                href="/ConstruControl-Windows.zip"
-                download="ConstruControl-Windows.zip"
+                href="https://github.com/GabrielFerezim/NovoLar-System/releases/download/v1.0.0/ConstruControl-Windows.zip"
+                target="_blank"
+                rel="noopener noreferrer"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -1490,8 +1491,9 @@ export default function App() {
 
           <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <a
-              href="/ConstruControl-Windows.zip"
-              download="ConstruControl-Windows.zip"
+              href="https://github.com/GabrielFerezim/NovoLar-System/releases/download/v1.0.0/ConstruControl-Windows.zip"
+              target="_blank"
+              rel="noopener noreferrer"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
