@@ -35,17 +35,44 @@ export function generateWhatsAppFiadoLink(account, debtSummary = null) {
   const balance = account.balance || 0;
   const formattedBalance = `R$ ${balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
 
+  // Vencimento
   let dueDateText = '';
   if (debtSummary && debtSummary.dueDate) {
-    dueDateText = `\n📅 *Vencimento:* ${new Date(debtSummary.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}`;
+    dueDateText = `\n*Vencimento da Fatura:* ${new Date(debtSummary.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}`;
   }
 
-  let itemsText = '';
-  if (debtSummary && debtSummary.items && debtSummary.items.length > 0) {
-    itemsText = `\n📦 *Últimos Itens:* ${debtSummary.items.map(i => `${i.quantity}x ${i.name}`).slice(0, 4).join(', ')}`;
+  // Coletar itens de todas as compras recentes em aberto
+  const allRecentItems = [];
+  if (account.history && Array.isArray(account.history)) {
+    const charges = account.history.filter(t => t.type === 'charge');
+    charges.slice(-5).forEach(c => {
+      const chargeDate = c.timestamp ? new Date(c.timestamp).toLocaleDateString('pt-BR') : '';
+      if (c.items && Array.isArray(c.items) && c.items.length > 0) {
+        c.items.forEach(i => {
+          allRecentItems.push(`  • ${i.quantity}x ${i.name} (R$ ${(parseFloat(i.salePrice || 0) * (parseInt(i.quantity) || 1)).toFixed(2)}) - ${chargeDate}`);
+        });
+      } else if (c.description) {
+        allRecentItems.push(`  • ${c.description} - R$ ${parseFloat(c.amount || 0).toFixed(2)} (${chargeDate})`);
+      }
+    });
   }
 
-  const message = `Olá *${account.name}*, tudo bem? 👋\n\nPassando para compartilhar o extrato atualizado da sua conta a prazo na *Novo Lar Materiais para Construção* 🏗️:\n\n💰 *Saldo Devedor Atual:* ${formattedBalance}${dueDateText}${itemsText}\n\nCaso já tenha realizado o pagamento, por favor desconsidere esta mensagem. Se precisar da chave PIX ou tiver qualquer dúvida, estamos à disposição!\n\n_Novo Lar Materiais para Construção_`;
+  let itemsSection = '';
+  if (allRecentItems.length > 0) {
+    itemsSection = `\n\n*ITENS COMPRADOS A PRAZO:*\n${allRecentItems.slice(-8).join('\n')}`;
+  }
+
+  const message = `*NOVO LAR - CASA & CONSTRUÇÃO*\n` +
+    `_Rua das Rosas, 1077 - Tel: (11) 4656-8183_\n\n` +
+    `Olá *${account.name || 'Cliente'}*, tudo bem?\n\n` +
+    `Segue o extrato da sua conta a prazo (fiado) na Novo Lar:\n\n` +
+    `*VALOR TOTAL EM ABERTO:* *${formattedBalance}*` +
+    `${dueDateText}` +
+    `${itemsSection}\n\n` +
+    `*FORMAS DE PAGAMENTO:*\n` +
+    `• *PIX Chave CNPJ:* 62.002.153/0001-25\n` +
+    `• Cartão de Débito/Crédito ou Dinheiro no balcão da loja\n\n` +
+    `_Caso já tenha efetuado o pagamento, por favor desconsidere esta mensagem. Qualquer dúvida, estamos à disposição!_`;
 
   return `https://wa.me/${fullPhone}?text=${encodeURIComponent(message)}`;
 }
