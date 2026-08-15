@@ -1383,6 +1383,29 @@ export default function App() {
                 <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--primary)' }}></div>
                 {storeId === 'loja-1' ? 'Loja 1 - Matriz' : 'Loja 2 - Filial'}
               </div>
+              <a
+                href="/ConstruControl-Windows.zip"
+                download="ConstruControl-Windows.zip"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '7px 10px',
+                  fontSize: '11.5px',
+                  fontWeight: '700',
+                  color: 'var(--brand-yellow)',
+                  backgroundColor: 'rgba(243, 180, 29, 0.12)',
+                  border: '1px solid rgba(243, 180, 29, 0.3)',
+                  borderRadius: 'var(--radius-sm)',
+                  textDecoration: 'none',
+                  marginTop: '4px',
+                  transition: 'var(--transition)'
+                }}
+                title="Baixar pacote do aplicativo para Windows (.zip)"
+              >
+                <Download size={13} strokeWidth={2.5} /> Baixar App Desktop (.exe)
+              </a>
               <button
                 onClick={handleLogout}
                 style={{
@@ -1465,7 +1488,29 @@ export default function App() {
             </span>
           </div>
 
-          <div className="header-actions">
+          <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <a
+              href="/ConstruControl-Windows.zip"
+              download="ConstruControl-Windows.zip"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '7px 14px',
+                fontSize: '12.5px',
+                fontWeight: '800',
+                textDecoration: 'none',
+                color: '#000',
+                backgroundColor: 'var(--brand-yellow)',
+                borderRadius: 'var(--radius-sm)',
+                boxShadow: '0 2px 8px rgba(243, 180, 29, 0.25)',
+                transition: 'all 0.2s ease'
+              }}
+              title="Baixar pacote do aplicativo para Windows (.zip com ConstruControl.exe)"
+            >
+              <Download size={15} strokeWidth={2.5} /> Baixar App Desktop
+            </a>
+
             {/* Sino de Notificações (Dropdown) */}
             <div style={{ position: 'relative' }}>
               <div
