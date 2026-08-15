@@ -1489,30 +1489,7 @@ export default function App() {
             </span>
           </div>
 
-          <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <a
-              href="https://github.com/GabrielFerezim/NovoLar-System/releases/download/v1.0.0/ConstruControl-Windows.zip"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '7px 14px',
-                fontSize: '12.5px',
-                fontWeight: '800',
-                textDecoration: 'none',
-                color: '#000',
-                backgroundColor: 'var(--brand-yellow)',
-                borderRadius: 'var(--radius-sm)',
-                boxShadow: '0 2px 8px rgba(243, 180, 29, 0.25)',
-                transition: 'all 0.2s ease'
-              }}
-              title="Baixar pacote do aplicativo para Windows (.zip com ConstruControl.exe)"
-            >
-              <Download size={15} strokeWidth={2.5} /> Baixar App Desktop
-            </a>
-
+          <div className="header-actions">
             {/* Sino de Notificações (Dropdown) */}
             <div style={{ position: 'relative' }}>
               <div
